@@ -1,5 +1,5 @@
 {
-  "name": "uw-ranked",
+  "name": "toxicity-analyzer",
   "version": "0.1.0",
   "private": true,
   "scripts": {
