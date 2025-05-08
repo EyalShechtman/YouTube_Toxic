@@ -37,6 +37,9 @@ verifySupabaseConnection().catch(console.error);
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 
+// Add API request counter at the top level
+let youtubeApiRequestCount = 0;
+
 // Types for our data
 interface ChannelData {
   id: string;
@@ -50,6 +53,7 @@ interface VideoData {
   likes: number;
   view_count: number;
   comment_count: number;
+  timestamp: Date;
 }
 
 interface CommentData {
@@ -157,6 +161,7 @@ const fetchRecentVideos = async (channelId: string, maxResults: number = 10): Pr
   console.log(`Fetching ${maxResults} recent videos for channel: ${channelId}`);
   
   // First get the uploads playlist ID
+  youtubeApiRequestCount++;
   const channelResponse = await axios.get('https://www.googleapis.com/youtube/v3/channels', {
     params: {
       part: 'contentDetails',
@@ -171,6 +176,7 @@ const fetchRecentVideos = async (channelId: string, maxResults: number = 10): Pr
   }
 
   // Get videos from the uploads playlist
+  youtubeApiRequestCount++;
   const response = await axios.get('https://www.googleapis.com/youtube/v3/playlistItems', {
     params: {
       part: 'snippet',
@@ -184,6 +190,7 @@ const fetchRecentVideos = async (channelId: string, maxResults: number = 10): Pr
   console.log('Found video IDs:', videoIds);
   
   // Fetch detailed video information
+  youtubeApiRequestCount++;
   const videoDetails = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
     params: {
       part: 'snippet,statistics',
@@ -198,7 +205,8 @@ const fetchRecentVideos = async (channelId: string, maxResults: number = 10): Pr
     channel_id: channelId,
     likes: parseInt(video.statistics?.likeCount || '0'),
     view_count: parseInt(video.statistics?.viewCount || '0'),
-    comment_count: parseInt(video.statistics?.commentCount || '0')
+    comment_count: parseInt(video.statistics?.commentCount || '0'),
+    timestamp: new Date(video.snippet?.publishedAt || '')
   })) || [];
 
   console.log('Fetched videos with details:', videos);
@@ -275,6 +283,9 @@ export const fetchAndStoreChannelData = async (channelUrl: string): Promise<void
   try {
     console.log('Starting data fetch process...');
     
+    // Reset API request counter at the start of each fetch
+    youtubeApiRequestCount = 0;
+    
     // Extract and fetch channel info
     const channelId = await extractChannelId(channelUrl);
     console.log('Extracted channel ID:', channelId);
@@ -311,7 +322,8 @@ export const fetchAndStoreChannelData = async (channelUrl: string): Promise<void
           topic: 'Fifa',
           likes: video.likes,
           view_count: video.view_count,
-          comment_count: video.comment_count
+          comment_count: video.comment_count,
+          timestamp: video.timestamp
         }], { onConflict: 'id' })
         .select();
 
@@ -363,7 +375,7 @@ export const fetchAndStoreChannelData = async (channelUrl: string): Promise<void
             console.error('Error storing comment data:', commentError);
             continue; // Skip this comment but continue with others
           }
-          console.log('Comment data stored successfully:', commentResult);
+          // console.log('Comment data stored successfully:', commentResult);
         } catch (error) {
           console.error('Error processing comment:', error);
           continue; // Skip this comment but continue with others
@@ -372,6 +384,7 @@ export const fetchAndStoreChannelData = async (channelUrl: string): Promise<void
     }
 
     console.log('Data fetch and storage completed successfully!');
+    console.log(`Total YouTube API requests made: ${youtubeApiRequestCount}`);
   } catch (error) {
     console.error('Error in fetchAndStoreChannelData:', error);
     throw error;
