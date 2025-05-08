@@ -1,5 +1,9 @@
 import axios from 'axios';
 
+if (!process.env.YOUTUBE_API_KEY) {
+  throw new Error('YOUTUBE_API_KEY is not defined in environment variables');
+}
+
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
 

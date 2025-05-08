@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import InputForm from '@/components/InputForm';
 import ToxicityDashboard from '@/components/ToxicityDashboard';
+import TestYouTubeFetcher from '@/components/TestYouTubeFetcher';
 
 interface VideoResult {
   videoId: string;
@@ -100,6 +101,10 @@ export default function Home() {
             <ToxicityDashboard results={results} />
           </div>
         )}
+      </div>
+
+      <div>
+        <TestYouTubeFetcher />
       </div>
     </div>
   );

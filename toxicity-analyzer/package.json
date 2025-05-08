@@ -9,9 +9,12 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.49.4",
     "@xenova/transformers": "^2.17.2",
     "axios": "^1.9.0",
     "chart.js": "^4.4.9",
+    "dotenv": "^16.5.0",
+    "googleapis": "^148.0.0",
     "next": "15.3.1",
     "react": "^19.0.0",
     "react-chartjs-2": "^5.3.0",
