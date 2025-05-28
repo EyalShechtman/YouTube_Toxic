@@ -79,49 +79,69 @@ export default function ToxicityDashboard({ results }: ToxicityDashboardProps) {
       title: {
         display: false,
       },
+      tooltip: {
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        titleColor: '#ffffff',
+        bodyColor: '#ffffff',
+        borderColor: 'rgba(236, 72, 153, 0.5)',
+        borderWidth: 1,
+      },
     },
     scales: {
       x: {
         ticks: { color: '#fff' },
-        grid: { color: 'rgba(255,255,255,0.05)' },
+        grid: { color: 'rgba(255,255,255,0.1)' },
       },
       y: {
         ticks: { color: '#fff' },
-        grid: { color: 'rgba(255,255,255,0.05)' },
+        grid: { color: 'rgba(255,255,255,0.1)' },
       },
     },
   };
 
   return (
-    <div className="space-y-10">
-      <div className="bg-[#181a2a] p-8 rounded-2xl shadow-lg">
-        <h2 className="text-2xl font-bold mb-6 bg-gradient-to-r from-pink-400 via-purple-400 to-blue-400 bg-clip-text text-transparent text-center">Toxicity Analysis Results</h2>
+    <div className="w-full max-w-6xl mx-auto space-y-10 mt-12">
+      <div className="bg-[#181a2a] p-8 rounded-3xl shadow-2xl">
+        <h2 className="text-3xl font-bold mb-8 bg-gradient-to-r from-pink-400 via-purple-400 to-blue-400 bg-clip-text text-transparent text-center">
+          Toxicity Analysis Results
+        </h2>
         <Bar data={barChartData} options={chartOptions} />
       </div>
-      <div className="bg-[#181a2a] p-8 rounded-2xl shadow-lg">
-        <h2 className="text-2xl font-bold mb-6 bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent text-center">Toxic Comments Over Time</h2>
+      <div className="bg-[#181a2a] p-8 rounded-3xl shadow-2xl">
+        <h2 className="text-3xl font-bold mb-8 bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent text-center">
+          Toxic Comments Over Time
+        </h2>
         <Line data={lineChartData} options={chartOptions} />
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
         {results.map((result) => (
           <div
             key={result.videoId}
-            className="bg-[#181a2a] p-6 rounded-2xl shadow-lg transition-transform transform hover:scale-105 hover:shadow-xl border border-white/5"
+            className="bg-[#181a2a] p-8 rounded-3xl shadow-2xl transition-all duration-300 transform hover:scale-105 hover:shadow-3xl border border-white/10 group"
           >
-            <h3 className="font-semibold mb-2 text-lg bg-gradient-to-r from-pink-400 via-purple-400 to-blue-400 bg-clip-text text-transparent">
+            <h3 className="font-bold mb-4 text-xl bg-gradient-to-r from-pink-400 via-purple-400 to-blue-400 bg-clip-text text-transparent leading-tight">
               <a
                 href={`https://www.youtube.com/watch?v=${result.videoId}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="hover:underline"
+                className="hover:underline group-hover:from-blue-400 group-hover:to-pink-400 transition-all"
               >
                 {result.title}
               </a>
             </h3>
-            <div className="flex flex-col gap-1 text-white/90">
-              <span>Average Toxicity: <span className="font-bold text-pink-400">{(result.toxicity_avg * 100).toFixed(1)}%</span></span>
-              <span>Toxic Comments: <span className="font-bold text-blue-400">{result.toxic_comment_pct.toFixed(1)}%</span></span>
-              <span>Comments Analyzed: <span className="font-bold text-purple-400">{result.comments_analyzed}</span></span>
+            <div className="flex flex-col gap-3 text-white/90">
+              <div className="flex justify-between items-center">
+                <span className="text-gray-300">Average Toxicity:</span>
+                <span className="font-bold text-pink-400 text-lg">{(result.toxicity_avg * 100).toFixed(1)}%</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-300">Toxic Comments:</span>
+                <span className="font-bold text-blue-400 text-lg">{result.toxic_comment_pct.toFixed(1)}%</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-300">Comments Analyzed:</span>
+                <span className="font-bold text-purple-400 text-lg">{result.comments_analyzed}</span>
+              </div>
             </div>
           </div>
         ))}

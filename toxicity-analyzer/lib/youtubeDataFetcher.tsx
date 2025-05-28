@@ -83,7 +83,8 @@ export const extractChannelId = async (channelUrl: string): Promise<string> => {
     const patterns = [
       /youtube\.com\/channel\/([^\/\?]+)/,
       /youtube\.com\/c\/([^\/\?]+)/,
-      /youtube\.com\/@([^\/\?]+)/
+      /youtube\.com\/@([^\/\?]+)/,
+      /youtube\.com\/user\/([^\/\?]+)/
     ];
 
     // First try direct pattern matching
@@ -93,13 +94,28 @@ export const extractChannelId = async (channelUrl: string): Promise<string> => {
         console.log('Pattern matched:', pattern.toString());
         const identifier = match[1];
         
-        // For @username format, we need to get the channel ID
-        if (pattern.toString().includes('@')) {
-          console.log('Found @username format, getting channel ID for:', identifier);
+        // For @username and custom URL formats, we need to get the channel ID
+        if (pattern.toString().includes('@') || pattern.toString().includes('/c/')) {
+          console.log('Found username format, getting channel ID for:', identifier);
+          const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+            params: {
+              part: 'snippet',
+              q: identifier,
+              type: 'channel',
+              key: process.env.YOUTUBE_API_KEY
+            }
+          });
+
+          if (response.data.items?.[0]?.id?.channelId) {
+            console.log('Found channel ID:', response.data.items[0].id.channelId);
+            return response.data.items[0].id.channelId;
+          }
+        } else if (pattern.toString().includes('/user/')) {
+          // For user format
           const response = await axios.get('https://www.googleapis.com/youtube/v3/channels', {
             params: {
               part: 'id',
-              forHandle: identifier, // Use forHandle for @ format
+              forUsername: identifier,
               key: process.env.YOUTUBE_API_KEY
             }
           });
@@ -109,11 +125,27 @@ export const extractChannelId = async (channelUrl: string): Promise<string> => {
             return response.data.items[0].id;
           }
         } else {
-          // For other formats, return the ID directly
+          // For channel ID format, return the ID directly
           console.log('Returning direct channel ID:', identifier);
           return identifier;
         }
       }
+    }
+
+    // If no pattern matched, try searching for the channel
+    const searchQuery = channelUrl.split('/').pop() || '';
+    const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+      params: {
+        part: 'snippet',
+        q: searchQuery,
+        type: 'channel',
+        key: process.env.YOUTUBE_API_KEY
+      }
+    });
+
+    if (response.data.items?.[0]?.id?.channelId) {
+      console.log('Found channel ID through search:', response.data.items[0].id.channelId);
+      return response.data.items[0].id.channelId;
     }
 
     throw new Error('Could not find channel ID. Please check the URL format.');
@@ -279,30 +311,82 @@ const fetchVideoComments = async (videoId: string): Promise<CommentData[]> => {
 /**
  * Main function to fetch and store all data for a channel
  */
-export const fetchAndStoreChannelData = async (channelUrl: string): Promise<void> => {
+export const fetchAndStoreChannelData = async (channelUrl: string): Promise<{
+  channelData: ChannelData;
+  videos: VideoData[];
+  comments: CommentData[];
+}> => {
   try {
     console.log('Starting data fetch process...');
     
     // Reset API request counter at the start of each fetch
     youtubeApiRequestCount = 0;
     
-    // Extract and fetch channel info
+    // Extract channel ID
     const channelId = await extractChannelId(channelUrl);
     console.log('Extracted channel ID:', channelId);
+    
+    // Check if channel exists in database
+    const { data: existingChannel, error: channelError } = await supabase
+      .from('channels')
+      .select('*')
+      .eq('id', channelId)
+      .single();
+
+    if (channelError && channelError.code !== 'PGRST116') { // PGRST116 is "not found" error
+      console.error('Error checking channel in database:', channelError);
+      throw new Error(`Failed to check channel in database: ${channelError.message}`);
+    }
+
+    if (existingChannel) {
+      console.log('Channel found in database, fetching existing data...');
+      
+      // Fetch existing videos
+      const { data: existingVideos, error: videosError } = await supabase
+        .from('videos')
+        .select('*')
+        .eq('channel_id', channelId)
+        .order('timestamp', { ascending: false });
+
+      if (videosError) {
+        console.error('Error fetching videos from database:', videosError);
+        throw new Error(`Failed to fetch videos from database: ${videosError.message}`);
+      }
+
+      // Fetch existing comments
+      const { data: existingComments, error: commentsError } = await supabase
+        .from('comments')
+        .select('*')
+        .in('video_id', existingVideos.map(v => v.id));
+
+      if (commentsError) {
+        console.error('Error fetching comments from database:', commentsError);
+        throw new Error(`Failed to fetch comments from database: ${commentsError.message}`);
+      }
+
+      return {
+        channelData: existingChannel,
+        videos: existingVideos,
+        comments: existingComments
+      };
+    }
+
+    // If channel doesn't exist, fetch new data
+    console.log('Channel not found in database, fetching new data...');
     
     const channelData = await fetchChannelInfo(channelId);
     console.log('Channel data:', channelData);
     
     // Store channel data
     console.log('Storing channel data...');
-    const { data: channelResult, error: channelError } = await supabase
+    const { data: channelResult, error: channelStoreError } = await supabase
       .from('channels')
       .upsert([channelData], { onConflict: 'id' })
       .select();
 
-    if (channelError) {
-      console.error('Error storing channel data:', channelError);
-      throw new Error(`Failed to store channel data: ${channelError.message}`);
+    if (channelStoreError) {
+      console.error('Error storing channel data:', channelStoreError);
+      throw new Error(`Failed to store channel data: ${channelStoreError.message}`);
     }
     console.log('Channel data stored successfully:', channelResult);
 
@@ -375,7 +459,6 @@ export const fetchAndStoreChannelData = async (channelUrl: string): Promise<void
             console.error('Error storing comment data:', commentError);
             continue; // Skip this comment but continue with others
           }
-          // console.log('Comment data stored successfully:', commentResult);
         } catch (error) {
           console.error('Error processing comment:', error);
           continue; // Skip this comment but continue with others
@@ -383,8 +466,25 @@ export const fetchAndStoreChannelData = async (channelUrl: string): Promise<void
       }
     }
 
+    // Fetch all stored comments for return
+    const { data: allComments, error: allCommentsError } = await supabase
+      .from('comments')
+      .select('*')
+      .in('video_id', videos.map(v => v.id));
+
+    if (allCommentsError) {
+      console.error('Error fetching all comments:', allCommentsError);
+      throw new Error(`Failed to fetch all comments: ${allCommentsError.message}`);
+    }
+
     console.log('Data fetch and storage completed successfully!');
     console.log(`Total YouTube API requests made: ${youtubeApiRequestCount}`);
+
+    return {
+      channelData,
+      videos,
+      comments: allComments
+    };
   } catch (error) {
     console.error('Error in fetchAndStoreChannelData:', error);
     throw error;

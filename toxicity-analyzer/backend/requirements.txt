@@ -1,0 +1,11 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+modal==0.57.3
+supabase==2.3.0
+google-api-python-client==2.108.0
+detoxify==0.5.1
+torch==2.1.1
+pandas==2.1.3
+numpy==1.26.2
+python-dotenv==1.0.0
+pydantic==2.5.2 

@@ -30,12 +30,13 @@ export async function POST(request: Request) {
     // Aggregate results
     const results = aggregateResults(analyzedComments);
 
-    // Combine with video titles
+    // Combine with video titles and add channel_id
     const finalResults = results.map(result => {
       const video = videos.find(v => v.videoId === result.videoId);
       return {
         ...result,
         title: video?.title || 'Unknown Title',
+        channel_id: channelId,
       };
     });
 
