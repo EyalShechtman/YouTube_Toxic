@@ -48,3 +48,9 @@ Project_Breakdown.md
 DB_Schema.md
 
 Group_3-MidtermReport.txt
+
+venv/
+
+pycache/
+
+backend/venv/
