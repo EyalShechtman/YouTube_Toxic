@@ -25,36 +25,89 @@ image = Image.debian_slim().pip_install(
 @app.function(image=image, gpu="T4", secrets=[Secret.from_name("modal-secrets")])
 def compute_toxicity_scores(texts: List[str]) -> List[float]:
     """Compute toxicity scores for a batch of texts using GPU acceleration."""
+    if not texts:
+        return []
+    
+    # Filter out empty texts and keep track of indices
+    valid_texts = []
+    valid_indices = []
+    for i, text in enumerate(texts):
+        if text and text.strip():
+            valid_texts.append(text.strip())
+            valid_indices.append(i)
+    
+    if not valid_texts:
+        return [0.0] * len(texts)
+    
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = Detoxify('original', device=device)
+    print(f"🔬 Using device: {device} for toxicity analysis")
     
-    with torch.no_grad():
-        results = model.predict(texts)
-    
-    return results['toxicity'].tolist()
+    try:
+        model = Detoxify('original', device=device)
+        
+        with torch.no_grad():
+            results = model.predict(valid_texts)
+        
+        # Handle different return types from detoxify
+        toxicity_scores = results['toxicity']
+        
+        # Convert to list if it's a tensor or numpy array
+        if hasattr(toxicity_scores, 'tolist'):
+            valid_scores = toxicity_scores.tolist()
+        elif isinstance(toxicity_scores, list):
+            valid_scores = toxicity_scores
+        else:
+            # Convert to float list as fallback
+            valid_scores = [float(score) for score in toxicity_scores]
+        
+        # Map scores back to original indices
+        final_scores = [0.0] * len(texts)
+        for i, score in zip(valid_indices, valid_scores):
+            final_scores[i] = float(score)
+        
+        return final_scores
+        
+    except Exception as e:
+        print(f"❌ Error in toxicity computation: {e}")
+        # Return neutral scores on error
+        return [0.5] * len(texts)
 
 @app.function(image=image, secrets=[Secret.from_name("modal-secrets")])
-def process_comments_batch(comments: List[Dict], batch_size: int = 32) -> List[Dict]:
+def process_comments_batch(comments: List[Dict]) -> List[Dict]:
     """Process a batch of comments and compute toxicity scores."""
-    # Extract texts for toxicity computation
-    texts = [comment['text'] for comment in comments]
+    if not comments:
+        return []
     
-    # Compute toxicity scores in batches
-    toxicity_scores = []
-    for i in range(0, len(texts), batch_size):
-        batch_texts = texts[i:i + batch_size]
-        batch_scores = compute_toxicity_scores.remote(batch_texts)
-        toxicity_scores.extend(batch_scores)
+    # Extract texts for toxicity computation and validate
+    texts = []
+    for comment in comments:
+        text = comment.get('text', '')
+        if not isinstance(text, str):
+            text = str(text) if text else ''
+        texts.append(text)
     
-    # Combine results
-    results = []
-    for comment, score in zip(comments, toxicity_scores):
-        results.append({
-            'id': comment['id'],
-            'toxicity_score': float(score)
-        })
-    
-    return results
+    try:
+        # Compute toxicity scores for the entire batch
+        toxicity_scores = compute_toxicity_scores.remote(texts)
+        
+        # Combine results
+        results = []
+        for comment, score in zip(comments, toxicity_scores):
+            if 'id' not in comment:
+                print(f"⚠️ Comment missing ID, skipping: {comment}")
+                continue
+                
+            results.append({
+                'id': comment['id'],
+                'toxicity_score': float(score)
+            })
+        
+        return results
+        
+    except Exception as e:
+        print(f"❌ Error processing comment batch: {e}")
+        # Return empty list on error - will be handled upstream
+        return []
 
 @app.function(image=image, secrets=[Secret.from_name("modal-secrets")])
 def store_toxicity_scores(scores: List[Dict], batch_size: int = 100):
@@ -104,11 +157,12 @@ def process_channel_comments(channel_id: str, batch_size: int = 32):
     
     print("✅ Channel found, checking for unprocessed comments...")
     
-    # Get all comments for the channel
+    # Get all comments for the channel by joining with videos table
+    # Since comments table doesn't have channel_id, we need to join through videos
     comments_response = (
         supabase.table("comments")
-        .select("id, text")
-        .eq("channel_id", channel_id)
+        .select("id, text, video_id, videos!inner(channel_id)")
+        .eq("videos.channel_id", channel_id)
         .execute()
     )
     
