@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import ToxicityChart from './ToxicityChart';
+import UserAnalysis from './UserAnalysis';
 
 interface ChannelData {
   id: string;
@@ -223,6 +224,9 @@ export default function ChannelResults({ channelId }: ChannelResultsProps) {
           title={`Toxicity Trends - ${channelData.name}`}
         />
       </div>
+
+      {/* User Analysis */}
+      <UserAnalysis channelId={channelId} />
 
       {/* Top Videos */}
       <div className="bg-gradient-to-br from-[#232336] to-[#1a1b2e] rounded-2xl shadow-xl border border-[#35374a]/50 p-6 md:p-8 hover:shadow-2xl transition-all duration-300">

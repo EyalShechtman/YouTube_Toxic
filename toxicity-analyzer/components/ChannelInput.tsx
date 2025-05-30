@@ -176,7 +176,7 @@ export default function ChannelInput({ onAnalysisStart, isAnalyzing }: ChannelIn
               </p>
             </div>
             <button
-              onClick={() => setChannelUrl('https://www.youtube.com/@MrBeast')}
+              onClick={() => setChannelUrl('https://www.youtube.com/@NickRTFM')}
               className="w-full bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-indigo-500 hover:to-purple-500 text-white rounded-lg py-3 px-4 text-sm font-medium transition-all duration-200 shadow-md"
             >
               Use @MrBeast as example
