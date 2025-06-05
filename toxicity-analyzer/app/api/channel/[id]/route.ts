@@ -86,24 +86,40 @@ export async function GET(
     const videoIds = videos.map(v => v.id);
     console.log('Found videos:', videoIds.length);
 
-    // Get analyzed comments count and data in one query
-    const { data: analyzedComments, error: analyzedError } = await supabase
-      .from('comments')
-      .select(`
-        id,
-        comments_data (
-          toxicity_score
-        )
-      `)
-      .in('video_id', videoIds)
-      .not('comments_data', 'is', null);
+    // Get all analyzed comments count and data (with pagination)
+    let allAnalyzedComments: any[] = [];
+    let offset = 0;
+    const pageSize = 1000;
+    let hasMoreData = true;
 
-    if (analyzedError) {
-      console.error('Error fetching analyzed comments:', analyzedError);
-      throw analyzedError;
+    while (hasMoreData) {
+      const { data: analyzedComments, error: analyzedError } = await supabase
+        .from('comments')
+        .select(`
+          id,
+          comments_data (
+            toxicity_score
+          )
+        `)
+        .in('video_id', videoIds)
+        .not('comments_data', 'is', null)
+        .range(offset, offset + pageSize - 1);
+
+      if (analyzedError) {
+        console.error('Error fetching analyzed comments:', analyzedError);
+        throw analyzedError;
+      }
+
+      if (analyzedComments && analyzedComments.length > 0) {
+        allAnalyzedComments = [...allAnalyzedComments, ...analyzedComments];
+        offset += pageSize;
+        hasMoreData = analyzedComments.length === pageSize;
+      } else {
+        hasMoreData = false;
+      }
     }
 
-    if (!analyzedComments || analyzedComments.length === 0) {
+    if (!allAnalyzedComments || allAnalyzedComments.length === 0) {
       return NextResponse.json({
         success: true,
         data: {
@@ -116,13 +132,13 @@ export async function GET(
       });
     }
 
-    console.log('Found analyzed comments:', analyzedComments.length);
+    console.log('Found analyzed comments:', allAnalyzedComments.length);
 
     // Calculate average toxicity from the analyzed comments
-    const averageToxicity = analyzedComments.reduce(
+    const averageToxicity = allAnalyzedComments.reduce(
       (acc, curr) => acc + (curr.comments_data?.toxicity_score || 0),
       0
-    ) / analyzedComments.length;
+    ) / allAnalyzedComments.length;
 
     console.log('Average toxicity:', averageToxicity);
 
@@ -132,7 +148,7 @@ export async function GET(
         id: channel.id,
         name: channel.name,
         video_count: videoCount || 0,
-        comment_count: analyzedComments.length,
+        comment_count: allAnalyzedComments.length,
         average_toxicity: averageToxicity,
       },
     });

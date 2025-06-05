@@ -47,31 +47,32 @@ export async function GET(
           )
         )
       `)
-      .eq('channel_id', channelId)
-      .order('view_count', { ascending: false });
+      .eq('channel_id', channelId);
 
     if (error) {
       throw error;
     }
 
     // Transform data to match the expected format
-    const videosData = (data as unknown as VideoWithToxicity[]).map(video => {
-      const toxicityScores = video.comments
-        .filter(comment => comment.comments_data)
-        .map(comment => comment.comments_data!.toxicity_score);
+    const videosData = (data as unknown as VideoWithToxicity[])
+      .map(video => {
+        const toxicityScores = video.comments
+          .filter(comment => comment.comments_data)
+          .map(comment => comment.comments_data!.toxicity_score);
 
-      const averageToxicity = toxicityScores.length > 0
-        ? toxicityScores.reduce((acc, curr) => acc + curr, 0) / toxicityScores.length
-        : 0;
+        const averageToxicity = toxicityScores.length > 0
+          ? toxicityScores.reduce((acc, curr) => acc + curr, 0) / toxicityScores.length
+          : 0;
 
-      return {
-        id: video.id,
-        title: video.title,
-        view_count: video.view_count,
-        comment_count: video.comment_count,
-        average_toxicity: averageToxicity,
-      };
-    });
+        return {
+          id: video.id,
+          title: video.title,
+          view_count: video.view_count,
+          comment_count: video.comment_count,
+          average_toxicity: averageToxicity,
+        };
+      })
+      .sort((a, b) => b.average_toxicity - a.average_toxicity); // Sort by toxicity (highest first)
 
     return NextResponse.json({
       success: true,

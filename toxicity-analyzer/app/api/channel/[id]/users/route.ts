@@ -33,31 +33,47 @@ export async function GET(
 
     console.log(`Fetching user stats for channel: ${channelId}`);
 
-    // Get all comments with toxicity scores for this channel
-    const { data: comments, error } = await supabase
-      .from('comments')
-      .select(`
-        id,
-        user_id,
-        author_name,
-        text,
-        like_count,
-        videos!inner (
-          channel_id
-        ),
-        comments_data (
-          toxicity_score
-        )
-      `)
-      .eq('videos.channel_id', channelId)
-      .not('comments_data', 'is', null);
+    // Get all comments with toxicity scores for this channel (with pagination)
+    let allComments: any[] = [];
+    let offset = 0;
+    const pageSize = 1000;
+    let hasMoreData = true;
 
-    if (error) {
-      console.error('Error fetching user data:', error);
-      throw error;
+    while (hasMoreData) {
+      const { data: comments, error } = await supabase
+        .from('comments')
+        .select(`
+          id,
+          user_id,
+          author_name,
+          text,
+          like_count,
+          videos!inner (
+            channel_id
+          ),
+          comments_data (
+            toxicity_score
+          )
+        `)
+        .eq('videos.channel_id', channelId)
+        .not('comments_data', 'is', null)
+        .range(offset, offset + pageSize - 1);
+
+      if (error) {
+        console.error('Error fetching user data:', error);
+        throw error;
+      }
+
+      if (comments && comments.length > 0) {
+        allComments = [...allComments, ...comments];
+        offset += pageSize;
+        hasMoreData = comments.length === pageSize;
+      } else {
+        hasMoreData = false;
+      }
     }
 
-    console.log(`Found ${comments.length} comments with user data`);
+    console.log(`Found ${allComments.length} comments with user data`);
 
     // Group comments by user and calculate statistics
     const userStatsMap = new Map<string, {
@@ -70,7 +86,7 @@ export async function GET(
       }>;
     }>();
 
-    comments.forEach(comment => {
+    allComments.forEach(comment => {
       // Better null checking for comments_data
       if (!comment.comments_data) return;
       

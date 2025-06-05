@@ -9,6 +9,10 @@ const supabase = createClient(
 interface CommentWithToxicity {
   id: string;
   timestamp: string;
+  video_id: string;
+  videos: {
+    title: string;
+  };
   comments_data: {
     toxicity_score: number;
   } | null;
@@ -29,42 +33,86 @@ export async function GET(
       );
     }
 
-    // First get all videos for this channel
-    const { data: videos, error: videosError } = await supabase
-      .from('videos')
-      .select('id')
-      .eq('channel_id', channelId);
+    // Get all comments with video titles for this channel (with pagination)
+    let allComments: CommentWithToxicity[] = [];
+    let offset = 0;
+    const pageSize = 1000;
+    let hasMoreData = true;
 
-    if (videosError) {
-      throw videosError;
+    while (hasMoreData) {
+      const { data, error } = await supabase
+        .from('comments')
+        .select(`
+          id,
+          timestamp,
+          video_id,
+          videos!inner (
+            title,
+            channel_id
+          ),
+          comments_data (
+            toxicity_score
+          )
+        `)
+        .eq('videos.channel_id', channelId)
+        .order('timestamp', { ascending: true })
+        .range(offset, offset + pageSize - 1);
+
+      if (error) {
+        throw error;
+      }
+
+      if (data && data.length > 0) {
+        allComments = [...allComments, ...(data as unknown as CommentWithToxicity[])];
+        offset += pageSize;
+        hasMoreData = data.length === pageSize;
+      } else {
+        hasMoreData = false;
+      }
     }
 
-    const videoIds = videos.map(v => v.id);
+    console.log(`Fetched ${allComments.length} total comments for channel ${channelId}`);
 
-    // Then get comments for these videos
-    const { data, error } = await supabase
-      .from('comments')
-      .select(`
-        id,
-        timestamp,
-        comments_data (
-          toxicity_score
-        )
-      `)
-      .in('video_id', videoIds)
-      .order('timestamp', { ascending: true });
+    // Group comments by video and calculate average toxicity per video
+    const videoMap = new Map<string, {
+      video_id: string;
+      video_title: string;
+      comments: { toxicity_score: number; timestamp: string }[];
+    }>();
 
-    if (error) {
-      throw error;
-    }
-
-    // Transform data to match the expected format
-    const toxicityData = (data as unknown as CommentWithToxicity[])
+    // Group comments by video
+    allComments
       .filter(item => item.comments_data)
-      .map(item => ({
-        timestamp: item.timestamp,
-        toxicity_score: item.comments_data!.toxicity_score,
-      }));
+      .forEach(item => {
+        const videoId = item.video_id;
+        if (!videoMap.has(videoId)) {
+          videoMap.set(videoId, {
+            video_id: videoId,
+            video_title: item.videos.title,
+            comments: []
+          });
+        }
+        videoMap.get(videoId)!.comments.push({
+          toxicity_score: item.comments_data!.toxicity_score,
+          timestamp: item.timestamp
+        });
+      });
+
+    // Calculate average toxicity per video and use earliest comment timestamp
+    const toxicityData = Array.from(videoMap.values()).map(video => {
+      const avgToxicity = video.comments.reduce((sum, comment) => sum + comment.toxicity_score, 0) / video.comments.length;
+      const earliestTimestamp = video.comments.reduce((earliest, comment) => 
+        new Date(comment.timestamp) < new Date(earliest) ? comment.timestamp : earliest, 
+        video.comments[0].timestamp
+      );
+      
+      return {
+        timestamp: earliestTimestamp,
+        toxicity_score: avgToxicity,
+        video_title: video.video_title,
+        video_id: video.video_id,
+      };
+    }).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
     return NextResponse.json({
       success: true,

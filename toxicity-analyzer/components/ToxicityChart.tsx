@@ -4,6 +4,8 @@ import Chart from 'chart.js/auto';
 interface ToxicityData {
   timestamp: string;
   toxicity_score: number;
+  video_title?: string;
+  video_id?: string;
 }
 
 interface ToxicityChartProps {
@@ -31,6 +33,22 @@ export default function ToxicityChart({ data, title = 'Toxicity Over Time' }: To
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
 
+    // Calculate cumulative average (overall average up to that point)
+    const calculateCumulativeAverage = (data: ToxicityData[]) => {
+      const cumulativeAverage: number[] = [];
+      let runningSum = 0;
+      
+      for (let i = 0; i < data.length; i++) {
+        runningSum += data[i].toxicity_score;
+        const average = runningSum / (i + 1);
+        cumulativeAverage.push(average);
+      }
+      
+      return cumulativeAverage;
+    };
+
+    const cumulativeAverageData = calculateCumulativeAverage(sortedData);
+
     // Create new chart
     chartInstance.current = new Chart(ctx, {
       type: 'line',
@@ -41,15 +59,27 @@ export default function ToxicityChart({ data, title = 'Toxicity Over Time' }: To
             label: 'Toxicity Score',
             data: sortedData.map(d => d.toxicity_score),
             borderColor: '#a78bfa',
-            backgroundColor: 'rgba(168, 139, 250, 0.15)',
+            backgroundColor: 'transparent',
+            fill: false,
             tension: 0.4,
-            fill: true,
             pointBackgroundColor: '#f472b6',
             pointBorderColor: '#a78bfa',
             pointBorderWidth: 2,
             pointRadius: 4,
             pointHoverRadius: 6,
             borderWidth: 3,
+          },
+          {
+            label: 'Overall Average',
+            data: cumulativeAverageData,
+            borderColor: '#38bdf8',
+            backgroundColor: 'transparent',
+            fill: false,
+            tension: 0.4,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            borderWidth: 3,
+            borderDash: [8, 4],
           },
         ],
       },
@@ -61,7 +91,20 @@ export default function ToxicityChart({ data, title = 'Toxicity Over Time' }: To
             display: false,
           },
           legend: {
-            display: false,
+            display: true,
+            position: 'top',
+            align: 'end',
+            labels: {
+              color: '#e0e7ef',
+              font: {
+                size: 12,
+                weight: 'normal',
+              },
+              padding: 15,
+              boxWidth: 15,
+              boxHeight: 2,
+              usePointStyle: false,
+            },
           },
           tooltip: {
             mode: 'index',
@@ -76,10 +119,23 @@ export default function ToxicityChart({ data, title = 'Toxicity Over Time' }: To
             displayColors: false,
             callbacks: {
               title: function(context) {
-                return `Date: ${context[0].label}`;
+                const dataIndex = context[0].dataIndex;
+                const videoTitle = sortedData[dataIndex]?.video_title;
+                return videoTitle ? `Video: ${videoTitle}` : `Date: ${context[0].label}`;
               },
               label: function(context) {
-                return `Toxicity: ${(context.parsed.y * 100).toFixed(1)}%`;
+                const datasetLabel = context.dataset.label;
+                const value = (context.parsed.y * 100).toFixed(1);
+                const date = context.label;
+                
+                if (datasetLabel === 'Toxicity Score') {
+                  return [
+                    `${datasetLabel}: ${value}%`,
+                    `Date: ${date}`
+                  ];
+                } else {
+                  return `${datasetLabel}: ${value}%`;
+                }
               }
             }
           },
