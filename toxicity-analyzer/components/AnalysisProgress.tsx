@@ -9,9 +9,11 @@ interface ProgressData {
 interface AnalysisProgressProps {
   analysisId: string;
   onComplete: () => void;
+  isTransitioning?: boolean;
+  isDataLoading?: boolean;
 }
 
-export default function AnalysisProgress({ analysisId, onComplete }: AnalysisProgressProps) {
+export default function AnalysisProgress({ analysisId, onComplete, isTransitioning = false, isDataLoading = false }: AnalysisProgressProps) {
   const [progress, setProgress] = useState<ProgressData>({
     status: 'in_progress',
     progress: 0,
@@ -20,6 +22,25 @@ export default function AnalysisProgress({ analysisId, onComplete }: AnalysisPro
   const [dots, setDots] = useState('');
 
   useEffect(() => {
+    // Show different messages based on state
+    if (isDataLoading) {
+      setProgress({
+        status: 'success',
+        progress: 1,
+        message: 'Loading your dashboard data...'
+      });
+      return;
+    }
+
+    if (isTransitioning) {
+      setProgress({
+        status: 'success',
+        progress: 1,
+        message: 'Analysis complete! Preparing results...'
+      });
+      return;
+    }
+
     const checkProgress = async () => {
       try {
         const response = await fetch(`/api/analysis-progress/${analysisId}`);
@@ -41,11 +62,11 @@ export default function AnalysisProgress({ analysisId, onComplete }: AnalysisPro
 
     const interval = setInterval(checkProgress, 2000);
     return () => clearInterval(interval);
-  }, [analysisId, onComplete]);
+  }, [analysisId, onComplete, isTransitioning, isDataLoading]);
 
   // Animate dots for loading effect
   useEffect(() => {
-    if (progress.status === 'in_progress') {
+    if (progress.status === 'in_progress' || isTransitioning || isDataLoading) {
       const dotsInterval = setInterval(() => {
         setDots(prev => {
           if (prev === '...') return '';
@@ -54,7 +75,7 @@ export default function AnalysisProgress({ analysisId, onComplete }: AnalysisPro
       }, 500);
       return () => clearInterval(dotsInterval);
     }
-  }, [progress.status]);
+  }, [progress.status, isTransitioning, isDataLoading]);
 
   const getStatusInfo = (status: string) => {
     switch (status) {
@@ -99,6 +120,18 @@ export default function AnalysisProgress({ analysisId, onComplete }: AnalysisPro
 
   const statusInfo = getStatusInfo(progress.status);
 
+  const getHeaderText = () => {
+    if (isDataLoading) return 'Loading Dashboard';
+    if (isTransitioning) return 'Finalizing Analysis';
+    return 'Analysis in Progress';
+  };
+
+  const getSubHeaderText = () => {
+    if (isDataLoading) return 'Fetching and preparing your toxicity analysis data';
+    if (isTransitioning) return 'Preparing your toxicity analysis dashboard';
+    return 'Processing your YouTube channel data';
+  };
+
   return (
     <div className="w-full max-w-3xl mx-auto animate-in slide-in-from-bottom-8 duration-700">
       <div className="bg-[#181a2a] rounded-2xl shadow-2xl border border-white/10 p-8">
@@ -106,9 +139,11 @@ export default function AnalysisProgress({ analysisId, onComplete }: AnalysisPro
         <div className="flex items-center justify-between mb-8">
           <div>
             <h3 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-pink-400 via-purple-400 to-blue-400 bg-clip-text text-transparent">
-              Analysis in Progress
+              {getHeaderText()}
             </h3>
-            <p className="text-white/70 text-sm mt-1">Processing your YouTube channel data</p>
+            <p className="text-white/70 text-sm mt-1">
+              {getSubHeaderText()}
+            </p>
           </div>
           
           <div className={`flex items-center gap-2 px-4 py-2 rounded-full border font-medium ${statusInfo.color}`}>
@@ -154,13 +189,13 @@ export default function AnalysisProgress({ analysisId, onComplete }: AnalysisPro
         {/* Status Message */}
         <div className="mt-8 p-6 bg-[#23243a] rounded-xl">
           <div className="flex items-center gap-3">
-            {progress.status === 'in_progress' && (
+            {(progress.status === 'in_progress' || isTransitioning || isDataLoading) && (
               <div className="flex-shrink-0">
                 <div className="w-6 h-6 border-3 border-purple-500/30 border-t-purple-500 rounded-full animate-spin"></div>
               </div>
             )}
             <p className="text-lg font-medium text-white flex-1">
-              {progress.message}{progress.status === 'in_progress' ? dots : ''}
+              {progress.message}{(progress.status === 'in_progress' || isTransitioning || isDataLoading) ? dots : ''}
             </p>
           </div>
         </div>
@@ -192,24 +227,46 @@ export default function AnalysisProgress({ analysisId, onComplete }: AnalysisPro
           </div>
           
           <div className={`p-4 rounded-xl transition-all duration-300 ${
-            progress.progress > 0.9 
+            progress.progress > 0.9 || isTransitioning || isDataLoading
               ? 'bg-pink-500/10 border border-pink-400/30 text-pink-300' 
               : 'bg-[#23243a] text-white/50'
           }`}>
             <div className="flex items-center gap-2 mb-2">
-              <div className={`w-2 h-2 rounded-full ${progress.progress > 0.9 ? 'bg-pink-400' : 'bg-white/30'}`}></div>
-              <h4 className="font-semibold text-sm">Generating Results</h4>
+              <div className={`w-2 h-2 rounded-full ${progress.progress > 0.9 || isTransitioning || isDataLoading ? 'bg-pink-400' : 'bg-white/30'}`}></div>
+              <h4 className="font-semibold text-sm">
+                {isDataLoading ? 'Loading Dashboard' : 'Generating Results'}
+              </h4>
             </div>
-            <p className="text-xs opacity-80">Creating visualizations</p>
+            <p className="text-xs opacity-80">
+              {isDataLoading ? 'Fetching data for visualization' : 'Creating visualizations'}
+            </p>
           </div>
         </div>
 
-        {/* Fun fact while waiting */}
-        {progress.status === 'in_progress' && (
+        {/* Context-specific messages */}
+        {progress.status === 'in_progress' && !isTransitioning && !isDataLoading && (
           <div className="mt-8 p-4 bg-gradient-to-r from-purple-500/10 to-blue-500/10 rounded-xl border border-purple-400/20">
             <h4 className="text-sm font-semibold text-purple-300 mb-2">💡 Did you know?</h4>
             <p className="text-xs text-white/70">
               Our AI analyzes thousands of comments using advanced natural language processing to detect toxicity patterns and trends across your channel's content.
+            </p>
+          </div>
+        )}
+
+        {isTransitioning && !isDataLoading && (
+          <div className="mt-8 p-4 bg-gradient-to-r from-emerald-500/10 to-blue-500/10 rounded-xl border border-emerald-400/20">
+            <h4 className="text-sm font-semibold text-emerald-300 mb-2">🎉 Analysis Complete!</h4>
+            <p className="text-xs text-white/70">
+              Your toxicity analysis is ready. We're now preparing your interactive dashboard with insights and visualizations.
+            </p>
+          </div>
+        )}
+
+        {isDataLoading && (
+          <div className="mt-8 p-4 bg-gradient-to-r from-blue-500/10 to-purple-500/10 rounded-xl border border-blue-400/20">
+            <h4 className="text-sm font-semibold text-blue-300 mb-2">📊 Preparing Dashboard</h4>
+            <p className="text-xs text-white/70">
+              Loading channel data, toxicity trends, user statistics, and video analysis. This will just take a moment...
             </p>
           </div>
         )}

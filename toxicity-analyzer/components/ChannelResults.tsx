@@ -18,107 +18,22 @@ interface VideoData {
   average_toxicity: number;
 }
 
-interface ChannelResultsProps {
-  channelId: string;
+interface ToxicityData {
+  timestamp: string;
+  toxicity_score: number;
+  video_title?: string;
+  video_id?: string;
 }
 
-export default function ChannelResults({ channelId }: ChannelResultsProps) {
-  const [channelData, setChannelData] = useState<ChannelData | null>(null);
-  const [videos, setVideos] = useState<VideoData[]>([]);
-  const [toxicityData, setToxicityData] = useState<Array<{ timestamp: string; toxicity_score: number }>>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+interface ChannelResultsProps {
+  channelId: string;
+  channelData: ChannelData;
+  videos: VideoData[];
+  toxicityData: ToxicityData[];
+}
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-
-        // Fetch channel data
-        const channelResponse = await fetch(`/api/channel/${channelId}`);
-        const channelResult = await channelResponse.json();
-        setChannelData(channelResult.data);
-
-        // Fetch toxicity data
-        const toxicityResponse = await fetch(`/api/channel/${channelId}/toxicity`);
-        const toxicityResult = await toxicityResponse.json();
-        setToxicityData(toxicityResult.data);
-
-        // Fetch video data
-        const videosResponse = await fetch(`/api/channel/${channelId}/videos`);
-        const videosResult = await videosResponse.json();
-        setVideos(videosResult.data);
-
-      } catch (err) {
-        setError('Failed to load channel data. Please try again.');
-        console.error('Error fetching data:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (channelId) {
-      fetchData();
-    }
-  }, [channelId]);
-
-  if (loading) {
-    return (
-      <div className="w-full max-w-6xl mx-auto p-4 md:p-8 mt-12">
-        <div className="animate-pulse space-y-8">
-          {/* Header skeleton */}
-          <div className="text-center space-y-4">
-            <div className="bg-gray-700/50 h-10 rounded-lg w-1/3 mx-auto"></div>
-            <div className="bg-gray-700/30 h-6 rounded w-1/4 mx-auto"></div>
-          </div>
-          
-          {/* Stats skeleton */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="bg-gray-700/30 h-24 rounded-xl"></div>
-            ))}
-          </div>
-          
-          {/* Chart skeleton */}
-          <div className="bg-gray-700/30 h-80 rounded-xl"></div>
-          
-          {/* Videos skeleton */}
-          <div className="space-y-4">
-            <div className="bg-gray-700/50 h-8 rounded w-1/4"></div>
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="bg-gray-700/30 h-20 rounded-xl"></div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="w-full max-w-6xl mx-auto p-4 md:p-8 mt-12">
-        <div className="bg-red-500/20 border border-red-400/50 rounded-2xl p-8 text-center backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-4">
-            <svg className="w-12 h-12 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z" />
-            </svg>
-            <p className="text-red-200 font-medium text-lg">{error}</p>
-            <button 
-              onClick={() => window.location.reload()}
-              className="mt-4 px-6 py-3 bg-red-500/20 hover:bg-red-500/30 border border-red-400/50 rounded-lg text-red-200 font-medium transition-colors"
-            >
-              Try Again
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!channelData) {
-    return null;
-  }
+export default function ChannelResults({ channelId, channelData, videos, toxicityData }: ChannelResultsProps) {
+  // No need for loading states since data is pre-fetched
 
   const getToxicityColor = (score: number) => {
     if (score < 0.3) return {
