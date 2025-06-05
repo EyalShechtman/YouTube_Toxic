@@ -41,6 +41,9 @@ export default function Home() {
   const [channelData, setChannelData] = useState<ChannelData | null>(null);
   const [videos, setVideos] = useState<VideoData[]>([]);
   const [toxicityData, setToxicityData] = useState<ToxicityData[]>([]);
+  
+  // Selected video state for detailed insights
+  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
 
   const handleAnalysisStart = async (channelUrl: string) => {
     try {
@@ -53,6 +56,7 @@ export default function Home() {
       setChannelData(null);
       setVideos([]);
       setToxicityData([]);
+      setSelectedVideoId(null);
 
       const response = await fetch('/api/analyze-channel', {
         method: 'POST',
@@ -144,6 +148,11 @@ export default function Home() {
     setChannelData(null);
     setVideos([]);
     setToxicityData([]);
+    setSelectedVideoId(null);
+  };
+
+  const handleVideoSelect = (videoId: string) => {
+    setSelectedVideoId(videoId);
   };
 
   // Determine what to show based on current state
@@ -223,6 +232,8 @@ export default function Home() {
               channelData={channelData}
               videos={videos}
               toxicityData={toxicityData}
+              selectedVideoId={selectedVideoId}
+              onVideoSelect={handleVideoSelect}
             />
           </div>
         )}

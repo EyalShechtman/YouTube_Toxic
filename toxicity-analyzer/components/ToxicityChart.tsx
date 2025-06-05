@@ -11,9 +11,16 @@ interface ToxicityData {
 interface ToxicityChartProps {
   data: ToxicityData[];
   title?: string;
+  onVideoSelect?: (videoId: string) => void;
+  selectedVideoId?: string | null;
 }
 
-export default function ToxicityChart({ data, title = 'Toxicity Over Time' }: ToxicityChartProps) {
+export default function ToxicityChart({ 
+  data, 
+  title = 'Toxicity Over Time', 
+  onVideoSelect,
+  selectedVideoId 
+}: ToxicityChartProps) {
   const chartRef = useRef<HTMLCanvasElement>(null);
   const chartInstance = useRef<Chart | null>(null);
 
@@ -62,11 +69,19 @@ export default function ToxicityChart({ data, title = 'Toxicity Over Time' }: To
             backgroundColor: 'transparent',
             fill: false,
             tension: 0.4,
-            pointBackgroundColor: '#f472b6',
-            pointBorderColor: '#a78bfa',
-            pointBorderWidth: 2,
-            pointRadius: 4,
-            pointHoverRadius: 6,
+            pointBackgroundColor: sortedData.map(d => 
+              d.video_id === selectedVideoId ? '#f59e0b' : '#f472b6'
+            ),
+            pointBorderColor: sortedData.map(d => 
+              d.video_id === selectedVideoId ? '#f59e0b' : '#a78bfa'
+            ),
+            pointBorderWidth: sortedData.map(d => 
+              d.video_id === selectedVideoId ? 3 : 2
+            ),
+            pointRadius: sortedData.map(d => 
+              d.video_id === selectedVideoId ? 6 : 4
+            ),
+            pointHoverRadius: 8,
             borderWidth: 3,
           },
           {
@@ -86,6 +101,15 @@ export default function ToxicityChart({ data, title = 'Toxicity Over Time' }: To
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        onClick: (event, elements) => {
+          if (elements.length > 0 && onVideoSelect) {
+            const elementIndex = elements[0].index;
+            const videoId = sortedData[elementIndex]?.video_id;
+            if (videoId) {
+              onVideoSelect(videoId);
+            }
+          }
+        },
         plugins: {
           title: {
             display: false,
@@ -115,8 +139,9 @@ export default function ToxicityChart({ data, title = 'Toxicity Over Time' }: To
             borderColor: '#a78bfa',
             borderWidth: 1,
             cornerRadius: 8,
-            padding: 12,
-            displayColors: false,
+            padding: 16,
+            displayColors: true,
+            usePointStyle: true,
             callbacks: {
               title: function(context) {
                 const dataIndex = context[0].dataIndex;
@@ -126,18 +151,52 @@ export default function ToxicityChart({ data, title = 'Toxicity Over Time' }: To
               label: function(context) {
                 const datasetLabel = context.dataset.label;
                 const value = (context.parsed.y * 100).toFixed(1);
-                const date = context.label;
                 
+                // Return different order: toxicity score first, then overall average, then date will be added separately
                 if (datasetLabel === 'Toxicity Score') {
-                  return [
-                    `${datasetLabel}: ${value}%`,
-                    `Date: ${date}`
-                  ];
-                } else {
+                  return `${datasetLabel}: ${value}%`;
+                } else if (datasetLabel === 'Overall Average') {
                   return `${datasetLabel}: ${value}%`;
                 }
+                return `${datasetLabel}: ${value}%`;
+              },
+              afterLabel: function(context) {
+                // Add date after the Overall Average line
+                if (context.dataset.label === 'Overall Average') {
+                  return `Date: ${context.label}`;
+                }
+                return '';
+              },
+              labelColor: function(context) {
+                // Make toxicity score use purple/magenta to match the line color
+                if (context.dataset.label === 'Toxicity Score') {
+                  return { borderColor: '#a78bfa', backgroundColor: '#a78bfa' }; // Purple to match the line
+                }
+                return { borderColor: '#38bdf8', backgroundColor: '#38bdf8' }; // Blue for average line
+              },
+              afterBody: function(context) {
+                // Only show click hint for toxicity score data points
+                const dataIndex = context[0].dataIndex;
+                const videoId = sortedData[dataIndex]?.video_id;
+                if (videoId && context[0].dataset.label === 'Toxicity Score') {
+                  return '\n🖱️ Click to view video details';
+                }
+                return '';
               }
-            }
+            },
+            titleFont: {
+              size: 13,
+              weight: 'bold'
+            },
+            bodyFont: {
+              size: 12,
+              weight: 'normal'
+            },
+            footerFont: {
+              size: 11,
+              style: 'italic'
+            },
+            footerColor: '#a78bfa'
           },
         },
         scales: {
@@ -201,7 +260,7 @@ export default function ToxicityChart({ data, title = 'Toxicity Over Time' }: To
         chartInstance.current.destroy();
       }
     };
-  }, [data, title]);
+  }, [data, title, selectedVideoId, onVideoSelect]);
 
   if (!data.length) {
     return (
@@ -219,7 +278,9 @@ export default function ToxicityChart({ data, title = 'Toxicity Over Time' }: To
     <div className="w-full bg-[#232336] rounded-xl p-6">
       <div className="mb-6">
         <h3 className="text-xl font-semibold text-white mb-2">{title}</h3>
-        <p className="text-sm text-gray-300">Track how toxicity levels change over time</p>
+        <p className="text-sm text-gray-300">
+          Track how toxicity levels change over time • Click on data points to view video details
+        </p>
       </div>
       <div className="h-[400px]">
         <canvas ref={chartRef} />
