@@ -1,12 +1,12 @@
 import os
 from typing import Optional
 
+import modal
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import Client, create_client
-from toxicity_processor import process_channel_comments
 from youtube_ingestion import YouTubeDataIngestion
 
 # Load environment variables
@@ -42,6 +42,17 @@ youtube_ingestion = YouTubeDataIngestion(
 
 # Store for tracking Modal jobs
 modal_jobs = {}
+
+
+def get_modal_function():
+    """Get the Modal function using lookup - the proper way to call deployed functions."""
+    try:
+        return modal.Function.lookup("youtube-analysis", "process_channel_comments")
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to lookup Modal function: {str(e)}. Make sure the youtube-analysis app is deployed.",
+        )
 
 
 # Pydantic models for request/response
@@ -128,7 +139,8 @@ async def analyze_channel(request: ChannelRequest):
                 # Start Modal analysis asynchronously
                 try:
                     # Use spawn instead of remote to run asynchronously
-                    call = process_channel_comments.spawn(channel_id)
+                    modal_function = get_modal_function()
+                    call = modal_function.spawn(channel_id)
                     modal_call_id = call.object_id
 
                     # Store the Modal call ID for progress tracking
@@ -203,7 +215,8 @@ async def analyze_channel(request: ChannelRequest):
 
                     try:
                         # Start Modal analysis asynchronously
-                        call = process_channel_comments.spawn(channel_id)
+                        modal_function = get_modal_function()
+                        call = modal_function.spawn(channel_id)
                         modal_call_id = call.object_id
 
                         modal_jobs[request.analysis_id]["modal_call_id"] = modal_call_id
@@ -349,7 +362,8 @@ async def get_analysis_progress(analysis_id: str):
 @api.get("/api/channel/{channel_id}/toxicity")
 async def get_channel_toxicity(channel_id: str):
     try:
-        result = process_channel_comments(channel_id)
+        modal_function = get_modal_function()
+        result = modal_function.remote(channel_id)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

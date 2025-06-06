@@ -2,11 +2,12 @@ import os
 import re
 import time
 from typing import Dict, List, Optional
+
+import pandas as pd
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from modal import App, Image, method
 from supabase import Client, create_client
-import pandas as pd
-from modal import Image, App, method
 
 # Initialize Modal app
 app = App("youtube-analysis")
@@ -18,6 +19,7 @@ image = Image.debian_slim().pip_install(
     "pandas",
     "numpy",
 )
+
 
 class YouTubeDataIngestion:
     def __init__(self, youtube_api_key: str, supabase_url: str, supabase_key: str):
@@ -76,7 +78,9 @@ class YouTubeDataIngestion:
             return {
                 "id": channel_id,
                 "name": channel["snippet"]["title"],
-                "uploads_playlist": channel["contentDetails"]["relatedPlaylists"]["uploads"],
+                "uploads_playlist": channel["contentDetails"]["relatedPlaylists"][
+                    "uploads"
+                ],
             }
         except HttpError as e:
             raise ValueError(f"Error fetching channel info: {e}")
@@ -130,7 +134,7 @@ class YouTubeDataIngestion:
                     self.update_progress(
                         "warning",
                         len(videos) / max_videos,
-                        f"No more videos found after processing {processed_count} videos"
+                        f"No more videos found after processing {processed_count} videos",
                     )
                     break
 
@@ -156,16 +160,18 @@ class YouTubeDataIngestion:
                     if comment_count == 0:
                         continue
 
-                    videos.append({
-                        "id": video["id"],
-                        "title": video["snippet"]["title"],
-                        "channel_id": channel_id,
-                        "topic": None,
-                        "likes": int(video["statistics"].get("likeCount", 0)),
-                        "view_count": int(video["statistics"].get("viewCount", 0)),
-                        "comment_count": comment_count,
-                        "timestamp": video["snippet"]["publishedAt"],
-                    })
+                    videos.append(
+                        {
+                            "id": video["id"],
+                            "title": video["snippet"]["title"],
+                            "channel_id": channel_id,
+                            "topic": None,
+                            "likes": int(video["statistics"].get("likeCount", 0)),
+                            "view_count": int(video["statistics"].get("viewCount", 0)),
+                            "comment_count": comment_count,
+                            "timestamp": video["snippet"]["publishedAt"],
+                        }
+                    )
                     eligible_in_batch += 1
 
                     if len(videos) >= max_videos:
@@ -177,7 +183,7 @@ class YouTubeDataIngestion:
                         self.update_progress(
                             "warning",
                             len(videos) / max_videos,
-                            f"Stopping search: {max_empty_batches} consecutive batches with no eligible videos"
+                            f"Stopping search: {max_empty_batches} consecutive batches with no eligible videos",
                         )
                         break
                 else:
@@ -185,7 +191,7 @@ class YouTubeDataIngestion:
                     self.update_progress(
                         "in_progress",
                         len(videos) / max_videos,
-                        f"Found {eligible_in_batch} eligible videos in this batch (total: {len(videos)}/{max_videos})"
+                        f"Found {eligible_in_batch} eligible videos in this batch (total: {len(videos)}/{max_videos})",
                     )
 
                 next_page_token = response.get("nextPageToken")
@@ -193,7 +199,7 @@ class YouTubeDataIngestion:
                     self.update_progress(
                         "info",
                         len(videos) / max_videos,
-                        f"Reached end of uploads playlist after processing {processed_count} total videos"
+                        f"Reached end of uploads playlist after processing {processed_count} total videos",
                     )
                     break
 
@@ -202,7 +208,7 @@ class YouTubeDataIngestion:
             self.update_progress(
                 "success",
                 1.0,
-                f"Search complete: Found {len(videos)} eligible videos after processing {processed_count} total videos"
+                f"Search complete: Found {len(videos)} eligible videos after processing {processed_count} total videos",
             )
             return videos
 
@@ -232,18 +238,20 @@ class YouTubeDataIngestion:
 
                 for item in response["items"]:
                     comment = item["snippet"]["topLevelComment"]["snippet"]
-                    comments.append({
-                        "video_id": video_id,
-                        "user_id": (
-                            comment["authorChannelId"]["value"]
-                            if "authorChannelId" in comment
-                            else None
-                        ),
-                        "text": comment["textDisplay"],
-                        "timestamp": comment["publishedAt"],
-                        "like_count": float(comment["likeCount"]),
-                        "author_name": comment["authorDisplayName"],
-                    })
+                    comments.append(
+                        {
+                            "video_id": video_id,
+                            "user_id": (
+                                comment["authorChannelId"]["value"]
+                                if "authorChannelId" in comment
+                                else None
+                            ),
+                            "text": comment["textDisplay"],
+                            "timestamp": comment["publishedAt"],
+                            "like_count": float(comment["likeCount"]),
+                            "author_name": comment["authorDisplayName"],
+                        }
+                    )
 
                 next_page_token = response.get("nextPageToken")
                 if not next_page_token:
@@ -263,10 +271,9 @@ class YouTubeDataIngestion:
         """Store all data in Supabase efficiently."""
         try:
             # Store channel
-            self.supabase.table("channels").upsert({
-                "id": channel_info["id"],
-                "name": channel_info["name"]
-            }).execute()
+            self.supabase.table("channels").upsert(
+                {"id": channel_info["id"], "name": channel_info["name"]}
+            ).execute()
 
             # Store videos in batch
             if videos:
@@ -309,7 +316,9 @@ class YouTubeDataIngestion:
         """Main function to ingest YouTube channel data."""
         try:
             print(f"\n🚀 Starting data ingestion for channel: {channel_url}")
-            self.update_progress("in_progress", 0.0, f"Processing channel: {channel_url}")
+            self.update_progress(
+                "in_progress", 0.0, f"Processing channel: {channel_url}"
+            )
 
             # Get channel ID and info
             print("📝 Extracting channel ID...")
@@ -317,41 +326,35 @@ class YouTubeDataIngestion:
             channel_info = self.get_channel_info(channel_id)
             print(f"✅ Found channel: {channel_info['name']} ({channel_id})")
             self.update_progress(
-                "in_progress",
-                0.1,
-                f"Found: {channel_info['name']} ({channel_id})"
+                "in_progress", 0.1, f"Found: {channel_info['name']} ({channel_id})"
             )
 
             # Get videos
-            print(f"\n🎥 Fetching up to {max_videos} videos (excluding Shorts & livestreams)...")
+            print(
+                f"\n🎥 Fetching up to {max_videos} videos (excluding Shorts & livestreams)..."
+            )
             self.update_progress(
                 "in_progress",
                 0.2,
-                f"Fetching {max_videos} videos from uploads playlist (excluding Shorts <=3min & livestreams)..."
+                f"Fetching {max_videos} videos from uploads playlist (excluding Shorts <=3min & livestreams)...",
             )
             videos = self.get_channel_videos(channel_info, max_videos)
             print(f"✅ Found {len(videos)} eligible videos")
             self.update_progress(
-                "in_progress",
-                0.4,
-                f"Found {len(videos)} eligible videos"
+                "in_progress", 0.4, f"Found {len(videos)} eligible videos"
             )
 
             if not videos:
                 print("❌ No eligible videos found")
                 self.update_progress(
-                    "error",
-                    0.0,
-                    "No eligible videos found (with comments)"
+                    "error", 0.0, "No eligible videos found (with comments)"
                 )
                 return {"success": False, "message": "No eligible videos found"}
 
             # Get comments for all videos
             print(f"\n💬 Fetching comments ({max_comments} per video)...")
             self.update_progress(
-                "in_progress",
-                0.5,
-                f"Fetching comments ({max_comments} per video)..."
+                "in_progress", 0.5, f"Fetching comments ({max_comments} per video)..."
             )
             all_comments = []
 
@@ -365,7 +368,7 @@ class YouTubeDataIngestion:
                 self.update_progress(
                     "in_progress",
                     0.5 + (0.3 * i / len(videos)),
-                    f"Processing video {i}/{len(videos)}: {title_preview}"
+                    f"Processing video {i}/{len(videos)}: {title_preview}",
                 )
 
                 comments = self.get_video_comments(
@@ -382,17 +385,19 @@ class YouTubeDataIngestion:
             success = self.store_data(channel_info, videos, all_comments)
 
             if success:
-                print(f"✅ Successfully ingested: Channel: {channel_info['name']}, Videos: {len(videos)}, Comments: {len(all_comments)}")
+                print(
+                    f"✅ Successfully ingested: Channel: {channel_info['name']}, Videos: {len(videos)}, Comments: {len(all_comments)}"
+                )
                 self.update_progress(
                     "success",
                     1.0,
-                    f"Successfully ingested: Channel: {channel_info['name']}, Videos: {len(videos)}, Comments: {len(all_comments)}"
+                    f"Successfully ingested: Channel: {channel_info['name']}, Videos: {len(videos)}, Comments: {len(all_comments)}",
                 )
                 return {
                     "success": True,
                     "channel": channel_info,
                     "videos": len(videos),
-                    "comments": len(all_comments)
+                    "comments": len(all_comments),
                 }
             else:
                 print("❌ Failed to store data")
@@ -402,4 +407,4 @@ class YouTubeDataIngestion:
         except Exception as e:
             print(f"❌ Ingestion failed: {str(e)}")
             self.update_progress("error", 0.0, f"Ingestion failed: {e}")
-            return {"success": False, "message": str(e)} 
+            return {"success": False, "message": str(e)}
