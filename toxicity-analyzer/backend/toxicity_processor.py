@@ -197,55 +197,66 @@ def load_cached_detoxify_model(device="cpu"):
     volumes={MODEL_CACHE_PATH: model_volume},
     secrets=[Secret.from_name("modal-secrets")],
 )
-def compute_toxicity_scores(texts: List[str]) -> List[float]:
-    """Compute toxicity scores for a batch of texts using GPU acceleration."""
-    if not texts:
+def compute_toxicity_scores_batch(comments_batch: List[Dict]) -> List[Dict]:
+    """Compute toxicity scores for a batch of comments with model loaded once."""
+    if not comments_batch:
         return []
 
-    # Filter out empty texts and keep track of indices
-    valid_texts = []
-    valid_indices = []
-    for i, text in enumerate(texts):
-        if text and text.strip():
-            valid_texts.append(text.strip())
-            valid_indices.append(i)
-
-    if not valid_texts:
-        return [0.0] * len(texts)
-
+    # Load model once for the entire batch processing
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"🔬 Using device: {device} for toxicity analysis")
+    print(f"🔬 Loading model on device: {device}")
 
     try:
-        # Load cached model
         model = load_cached_detoxify_model(device)
+        print(f"✅ Model loaded successfully on {device}")
 
+        # Process all comments in this batch
+        results = []
+        texts = []
+        valid_comments = []
+
+        # Prepare texts and filter valid comments
+        for comment in comments_batch:
+            text = comment.get("text", "")
+            if not isinstance(text, str):
+                text = str(text) if text else ""
+
+            if text.strip() and "id" in comment:
+                texts.append(text.strip())
+                valid_comments.append(comment)
+
+        if not texts:
+            return []
+
+        # Compute toxicity scores for all texts at once
         with torch.no_grad():
-            results = model.predict(valid_texts)
+            toxicity_results = model.predict(texts)
 
-        # Handle different return types from detoxify
-        toxicity_scores = results["toxicity"]
+        toxicity_scores = toxicity_results["toxicity"]
 
-        # Convert to list if it's a tensor or numpy array
+        # Convert to list if needed
         if hasattr(toxicity_scores, "tolist"):
-            valid_scores = toxicity_scores.tolist()
+            scores = toxicity_scores.tolist()
         elif isinstance(toxicity_scores, list):
-            valid_scores = toxicity_scores
+            scores = toxicity_scores
         else:
-            # Convert to float list as fallback
-            valid_scores = [float(score) for score in toxicity_scores]
+            scores = [float(score) for score in toxicity_scores]
 
-        # Map scores back to original indices
-        final_scores = [0.0] * len(texts)
-        for i, score in zip(valid_indices, valid_scores):
-            final_scores[i] = float(score)
+        # Combine results
+        for comment, score in zip(valid_comments, scores):
+            results.append({"id": comment["id"], "toxicity_score": float(score)})
 
-        return final_scores
+        print(f"✅ Processed {len(results)} comments successfully")
+        return results
 
     except Exception as e:
         print(f"❌ Error in toxicity computation: {e}")
         # Return neutral scores on error
-        return [0.5] * len(texts)
+        return [
+            {"id": comment["id"], "toxicity_score": 0.5}
+            for comment in comments_batch
+            if "id" in comment
+        ]
 
 
 @app.function(
@@ -255,36 +266,8 @@ def compute_toxicity_scores(texts: List[str]) -> List[float]:
 )
 def process_comments_batch(comments: List[Dict]) -> List[Dict]:
     """Process a batch of comments and compute toxicity scores."""
-    if not comments:
-        return []
-
-    # Extract texts for toxicity computation and validate
-    texts = []
-    for comment in comments:
-        text = comment.get("text", "")
-        if not isinstance(text, str):
-            text = str(text) if text else ""
-        texts.append(text)
-
-    try:
-        # Compute toxicity scores for the entire batch
-        toxicity_scores = compute_toxicity_scores.remote(texts)
-
-        # Combine results
-        results = []
-        for comment, score in zip(comments, toxicity_scores):
-            if "id" not in comment:
-                print(f"⚠️ Comment missing ID, skipping: {comment}")
-                continue
-
-            results.append({"id": comment["id"], "toxicity_score": float(score)})
-
-        return results
-
-    except Exception as e:
-        print(f"❌ Error processing comment batch: {e}")
-        # Return empty list on error - will be handled upstream
-        return []
+    # This function is now deprecated in favor of compute_toxicity_scores_batch
+    return compute_toxicity_scores_batch.remote(comments)
 
 
 @app.function(
@@ -293,7 +276,10 @@ def process_comments_batch(comments: List[Dict]) -> List[Dict]:
     secrets=[Secret.from_name("modal-secrets")],
 )
 def store_toxicity_scores(scores: List[Dict], batch_size: int = 100):
-    """Store toxicity scores in Supabase."""
+    """Store toxicity scores in Supabase with proper batching."""
+    if not scores:
+        return
+
     # Initialize Supabase client inside the function
     supabase_url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
     supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -303,9 +289,18 @@ def store_toxicity_scores(scores: List[Dict], batch_size: int = 100):
 
     supabase = create_client(supabase_url, supabase_key)
 
+    print(f"💾 Storing {len(scores)} scores in batches of {batch_size}")
+
     for i in range(0, len(scores), batch_size):
         batch = scores[i : i + batch_size]
-        supabase.table("comments_data").upsert(batch).execute()
+        try:
+            supabase.table("comments_data").upsert(batch).execute()
+            batch_num = i // batch_size + 1
+            total_batches = (len(scores) + batch_size - 1) // batch_size
+            print(f"✅ Stored batch {batch_num}/{total_batches}")
+        except Exception as e:
+            print(f"❌ Error storing batch {i//batch_size + 1}: {e}")
+            raise
 
 
 @app.function(
@@ -313,11 +308,11 @@ def store_toxicity_scores(scores: List[Dict], batch_size: int = 100):
     volumes={MODEL_CACHE_PATH: model_volume},
     secrets=[Secret.from_name("modal-secrets")],
 )
-def process_channel_comments(channel_id: str, batch_size: int = 32):
-    """Process all comments for a channel and compute toxicity scores."""
+def process_channel_comments(channel_id: str, processing_batch_size: int = 1000):
+    """Process all comments for a channel with proper pagination."""
     print(f"\n🔍 Starting toxicity analysis for channel: {channel_id}")
 
-    # Initialize Supabase client inside the function
+    # Initialize Supabase client
     supabase_url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
     supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
@@ -326,7 +321,7 @@ def process_channel_comments(channel_id: str, batch_size: int = 32):
 
     supabase = create_client(supabase_url, supabase_key)
 
-    # First, check if the channel exists
+    # Check if channel exists
     print("📝 Checking if channel exists in database...")
     channel_response = (
         supabase.table("channels").select("id").eq("id", channel_id).execute()
@@ -339,64 +334,72 @@ def process_channel_comments(channel_id: str, batch_size: int = 32):
             "message": f"Channel {channel_id} not found in database",
         }
 
-    print("✅ Channel found, checking for unprocessed comments...")
+    print("✅ Channel found, processing comments in pagination...")
 
-    # Get all comments for the channel by joining with videos table
-    # Since comments table doesn't have channel_id, we need to join through videos
-    comments_response = (
-        supabase.table("comments")
-        .select("id, text, video_id, videos!inner(channel_id)")
-        .eq("videos.channel_id", channel_id)
-        .execute()
-    )
-
-    if not comments_response.data:
-        print("❌ No comments found for this channel")
-        return {"status": "error", "message": "No comments found for this channel"}
-
-    # Get existing toxicity scores
+    # Get existing toxicity scores to avoid reprocessing
+    print("🔍 Getting existing toxicity scores...")
     existing_scores_response = supabase.table("comments_data").select("id").execute()
-
     existing_ids = (
         {item["id"] for item in existing_scores_response.data}
         if existing_scores_response.data
         else set()
     )
+    print(f"📝 Found {len(existing_ids)} existing toxicity scores")
 
-    # Filter out comments that already have toxicity scores
-    unprocessed_comments = [
-        comment
-        for comment in comments_response.data
-        if comment["id"] not in existing_ids
-    ]
+    # Process comments in chunks to handle large datasets
+    offset = 0
+    total_processed = 0
 
-    if not unprocessed_comments:
-        print("✅ All comments for this channel have already been processed")
-        return {
-            "status": "success",
-            "message": "All comments for this channel have already been processed",
-        }
+    while True:
+        print(f"\n📦 Fetching comments batch (offset: {offset})...")
 
-    print(f"📝 Found {len(unprocessed_comments)} unprocessed comments")
-    # Process only the unprocessed comments
-    comments = unprocessed_comments
-    all_scores = []
-
-    # Process comments in batches
-    print(f"\n🧪 Processing comments in batches of {batch_size}...")
-    for i in range(0, len(comments), batch_size):
-        batch = comments[i : i + batch_size]
-        print(
-            f"📦 Processing batch {i//batch_size + 1}/{(len(comments) + batch_size - 1)//batch_size}"
+        # Get comments for this channel in batches
+        comments_response = (
+            supabase.table("comments")
+            .select("id, text, video_id, videos!inner(channel_id)")
+            .eq("videos.channel_id", channel_id)
+            .range(offset, offset + processing_batch_size - 1)
+            .execute()
         )
-        scores = process_comments_batch.remote(batch)
-        all_scores.extend(scores)
 
-    # Store scores
-    if all_scores:
-        print(f"\n💾 Storing {len(all_scores)} toxicity scores in Supabase...")
-        store_toxicity_scores.remote(all_scores)
-        print("✅ Successfully stored toxicity scores")
+        if not comments_response.data:
+            print("✅ No more comments to process")
+            break
 
-    print(f"🎉 Completed processing {len(all_scores)} comments")
-    return {"status": "success", "message": f"Processed {len(all_scores)} new comments"}
+        # Filter out already processed comments
+        unprocessed_comments = [
+            comment
+            for comment in comments_response.data
+            if comment["id"] not in existing_ids
+        ]
+
+        print(
+            f"📝 Found {len(comments_response.data)} comments, {len(unprocessed_comments)} unprocessed"
+        )
+
+        if unprocessed_comments:
+            # Process comments using the efficient batch function
+            print(f"🧪 Processing {len(unprocessed_comments)} unprocessed comments...")
+
+            # Process in one efficient batch with model loaded once
+            scores = compute_toxicity_scores_batch.remote(unprocessed_comments)
+
+            if scores:
+                # Store results
+                print(f"💾 Storing {len(scores)} toxicity scores...")
+                store_toxicity_scores.remote(scores)
+                total_processed += len(scores)
+
+                # Add processed IDs to existing set to avoid reprocessing
+                existing_ids.update(score["id"] for score in scores)
+
+        offset += processing_batch_size
+
+        # Break if we got fewer results than requested (last page)
+        if len(comments_response.data) < processing_batch_size:
+            break
+
+    print(
+        f"🎉 Completed processing {total_processed} new comments for channel {channel_id}"
+    )
+    return {"status": "success", "message": f"Processed {total_processed} new comments"}

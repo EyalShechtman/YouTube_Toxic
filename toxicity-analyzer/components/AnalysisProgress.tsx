@@ -52,7 +52,7 @@ export default function AnalysisProgress({ analysisId, onComplete, isTransitioni
           message: data.message
         });
 
-        if (data.status === 'success' || data.status === 'error') {
+        if (data.status === 'success' || data.status === 'completed' || data.status === 'error') {
           onComplete();
         }
       } catch (error) {
@@ -66,7 +66,11 @@ export default function AnalysisProgress({ analysisId, onComplete, isTransitioni
 
   // Animate dots for loading effect
   useEffect(() => {
-    if (progress.status === 'in_progress' || isTransitioning || isDataLoading) {
+    const isLoading = ['in_progress', 'ingesting', 'starting_analysis', 'analyzing'].includes(progress.status) 
+      || isTransitioning 
+      || isDataLoading;
+      
+    if (isLoading) {
       const dotsInterval = setInterval(() => {
         setDots(prev => {
           if (prev === '...') return '';
@@ -80,6 +84,7 @@ export default function AnalysisProgress({ analysisId, onComplete, isTransitioni
   const getStatusInfo = (status: string) => {
     switch (status) {
       case 'success':
+      case 'completed':
         return {
           color: 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50',
           icon: (
@@ -89,6 +94,7 @@ export default function AnalysisProgress({ analysisId, onComplete, isTransitioni
           )
         };
       case 'error':
+      case 'not_found':
         return {
           color: 'bg-red-500/20 text-red-300 border-red-400/50',
           icon: (
@@ -106,6 +112,10 @@ export default function AnalysisProgress({ analysisId, onComplete, isTransitioni
             </svg>
           )
         };
+      case 'ingesting':
+      case 'starting_analysis':
+      case 'analyzing':
+      case 'in_progress':
       default:
         return {
           color: 'bg-blue-500/20 text-blue-300 border-blue-400/50',
@@ -189,13 +199,13 @@ export default function AnalysisProgress({ analysisId, onComplete, isTransitioni
         {/* Status Message */}
         <div className="mt-8 p-6 bg-[#23243a] rounded-xl">
           <div className="flex items-center gap-3">
-            {(progress.status === 'in_progress' || isTransitioning || isDataLoading) && (
+            {(['in_progress', 'ingesting', 'starting_analysis', 'analyzing'].includes(progress.status) || isTransitioning || isDataLoading) && (
               <div className="flex-shrink-0">
                 <div className="w-6 h-6 border-3 border-purple-500/30 border-t-purple-500 rounded-full animate-spin"></div>
               </div>
             )}
             <p className="text-lg font-medium text-white flex-1">
-              {progress.message}{(progress.status === 'in_progress' || isTransitioning || isDataLoading) ? dots : ''}
+              {progress.message}{(['in_progress', 'ingesting', 'starting_analysis', 'analyzing'].includes(progress.status) || isTransitioning || isDataLoading) ? dots : ''}
             </p>
           </div>
         </div>
