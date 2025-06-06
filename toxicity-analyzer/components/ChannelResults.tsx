@@ -26,11 +26,21 @@ interface ToxicityData {
   video_id?: string;
 }
 
+interface UserData {
+  most_active: any[];
+  most_toxic: any[];
+  most_liked: any[];
+  total_users: number;
+  min_comments_threshold: number;
+}
+
 interface ChannelResultsProps {
   channelId: string;
   channelData: ChannelData;
   videos: VideoData[];
   toxicityData: ToxicityData[];
+  userData?: UserData | null;
+  isUserDataLoading?: boolean;
   selectedVideoId?: string | null;
   onVideoSelect?: (videoId: string) => void;
 }
@@ -40,6 +50,8 @@ export default function ChannelResults({
   channelData, 
   videos, 
   toxicityData,
+  userData,
+  isUserDataLoading = false,
   selectedVideoId,
   onVideoSelect 
 }: ChannelResultsProps) {
@@ -173,8 +185,57 @@ export default function ChannelResults({
           />
         </div>
 
-        {/* User Analysis */}
-        <UserAnalysis channelId={channelId} />
+        {/* User Analysis - show loading state while data loads */}
+        {userData ? (
+          <UserAnalysis channelId={channelId} userData={userData} />
+        ) : isUserDataLoading ? (
+          <div className="bg-gradient-to-br from-[#232336] to-[#1a1b2e] rounded-2xl shadow-xl border border-[#35374a]/50 p-6 md:p-8">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-blue-500 rounded-lg flex items-center justify-center">
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+                </svg>
+              </div>
+              <h2 className="text-2xl md:text-3xl font-bold text-white">User Analysis</h2>
+              <div className="ml-auto flex items-center gap-2 text-amber-400">
+                <div className="w-4 h-4 border-2 border-amber-400/30 border-t-amber-400 rounded-full animate-spin"></div>
+                <span className="text-sm">Loading user data...</span>
+              </div>
+            </div>
+            <div className="animate-pulse space-y-6">
+              <div className="h-16 bg-gray-700/20 rounded-lg border border-gray-600/30"></div>
+              <div className="h-12 bg-gray-700/20 rounded-lg border border-gray-600/30"></div>
+              <div className="flex gap-2">
+                {[1, 2, 3].map(i => (
+                  <div key={i} className="h-10 bg-gray-700/20 rounded-lg flex-1 border border-gray-600/30"></div>
+                ))}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[1, 2, 3, 4].map(i => (
+                  <div key={i} className="h-32 bg-gray-700/20 rounded-xl border border-gray-600/30"></div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-gradient-to-br from-[#232336] to-[#1a1b2e] rounded-2xl shadow-xl border border-[#35374a]/50 p-6 md:p-8">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-blue-500 rounded-lg flex items-center justify-center">
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+                </svg>
+              </div>
+              <h2 className="text-2xl md:text-3xl font-bold text-white">User Analysis</h2>
+            </div>
+            <div className="text-center py-8">
+              <svg className="w-16 h-16 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              <p className="text-gray-400 text-lg mb-2">User Analysis Unavailable</p>
+              <p className="text-gray-500 text-sm">Unable to load user data for this channel</p>
+            </div>
+          </div>
+        )}
 
         {/* Top Videos */}
         <div className="bg-gradient-to-br from-[#232336] to-[#1a1b2e] rounded-2xl shadow-xl border border-[#35374a]/50 p-6 md:p-8 hover:shadow-2xl transition-all duration-300">

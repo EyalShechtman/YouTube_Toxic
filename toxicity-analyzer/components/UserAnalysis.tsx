@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import UserInsights from './UserInsights';
 
 interface UserStats {
   user_id: string | null;
@@ -15,46 +16,125 @@ interface UserAnalysisData {
   most_toxic: UserStats[];
   most_liked: UserStats[];
   total_users: number;
+  min_comments_threshold: number;
+}
+
+interface RawUserAnalysisData {
+  all_users: UserStats[];
 }
 
 interface UserAnalysisProps {
   channelId: string;
+  userData?: {
+    most_active: UserStats[];
+    most_toxic: UserStats[];
+    most_liked: UserStats[];
+    total_users: number;
+    min_comments_threshold: number;
+  } | null;
 }
 
-export default function UserAnalysis({ channelId }: UserAnalysisProps) {
+export default function UserAnalysis({ channelId, userData: preloadedUserData }: UserAnalysisProps) {
   const [userData, setUserData] = useState<UserAnalysisData | null>(null);
+  const [rawUserData, setRawUserData] = useState<RawUserAnalysisData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'active' | 'toxic' | 'liked'>('active');
+  const [minComments, setMinComments] = useState(2);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [selectedUserName, setSelectedUserName] = useState<string | null>(null);
 
+  // Initial data processing (use preloaded data or fetch if not available)
   useEffect(() => {
-    const fetchUserData = async () => {
+    const processUserData = async () => {
       try {
-        setLoading(true);
+        setInitialLoading(true);
         setError(null);
 
-        console.log(`🔍 Fetching user data for channel: ${channelId}`);
-        const response = await fetch(`/api/channel/${channelId}/users`);
-        const result = await response.json();
+        let result;
+        
+        if (preloadedUserData) {
+          console.log(`✅ Using preloaded user data for channel: ${channelId}`);
+          result = { data: preloadedUserData };
+        } else {
+          console.log(`🔍 Fetching user data for channel: ${channelId} (fallback)`);
+          // Fallback: Fetch with min_comments=1 to get ALL users, then filter client-side
+          const response = await fetch(`/api/channel/${channelId}/users?min_comments=1&get_all=true`);
+          result = await response.json();
 
-        if (!response.ok) {
-          throw new Error(result.message || 'Failed to fetch user data');
+          if (!response.ok) {
+            throw new Error(result.message || 'Failed to fetch user data');
+          }
         }
 
-        console.log('👥 User data:', result);
-        setUserData(result.data);
+        console.log('👥 Processing user data:', result.data);
+        
+        // For preloaded data with get_all=true, we should have ALL users in each sorted array
+        // Use the most_active array as it contains ALL users sorted by activity
+        let allUsers;
+        if (preloadedUserData && result.data.most_active.length === result.data.most_toxic.length && 
+            result.data.most_active.length === result.data.most_liked.length) {
+          // This means we have ALL users in each array, so just use one of them
+          console.log(`📋 Using preloaded data with all users: ${result.data.most_active.length}`);
+          allUsers = result.data.most_active; // All users, sorted by activity
+        } else {
+          // Fallback: combine and deduplicate
+          console.log(`⚠️  Using fallback logic - lengths don't match:`);
+          console.log(`   - most_active: ${result.data.most_active.length}`);
+          console.log(`   - most_toxic: ${result.data.most_toxic.length}`);
+          console.log(`   - most_liked: ${result.data.most_liked.length}`);
+          console.log(`   - preloadedUserData: ${!!preloadedUserData}`);
+          
+          allUsers = [
+            ...result.data.most_active,
+            ...result.data.most_toxic, 
+            ...result.data.most_liked
+          ];
+          
+          console.log(`📋 Processing user data (fallback):`);
+          console.log(`   - Most active: ${result.data.most_active.length}`);
+          console.log(`   - Most toxic: ${result.data.most_toxic.length}`);
+          console.log(`   - Most liked: ${result.data.most_liked.length}`);
+          console.log(`   - Combined total: ${allUsers.length}`);
+          
+          // Remove duplicates based on user_id or author_name
+          allUsers = allUsers.filter((user, index, array) => {
+            const key = user.user_id || user.author_name;
+            return array.findIndex(u => (u.user_id || u.author_name) === key) === index;
+          });
+
+          console.log(`   - Unique users after deduplication: ${allUsers.length}`);
+        }
+
+        setRawUserData({ all_users: allUsers });
+        setUserData(filterUserData(allUsers, minComments));
       } catch (err) {
-        console.error('❌ Error fetching user data:', err);
+        console.error('❌ Error processing user data:', err);
         setError('Failed to load user data. Please try again.');
       } finally {
-        setLoading(false);
+        setInitialLoading(false);
       }
     };
 
     if (channelId) {
-      fetchUserData();
+      processUserData();
     }
-  }, [channelId]);
+  }, [channelId, preloadedUserData]);
+
+  // Client-side filtering when minComments changes
+  useEffect(() => {
+    if (rawUserData && !initialLoading) {
+      setLoading(true);
+      console.log(`🎯 Filtering users for ${minComments}+ comments`);
+      
+      // Small delay to show loading state, then filter
+      setTimeout(() => {
+        setUserData(filterUserData(rawUserData.all_users, minComments));
+        setLoading(false);
+      }, 100);
+    }
+  }, [minComments, rawUserData, initialLoading]);
 
   const getToxicityColor = (score: number) => {
     if (score < 0.3) return {
@@ -79,13 +159,50 @@ export default function UserAnalysis({ channelId }: UserAnalysisProps) {
     return text.substring(0, maxLength) + '...';
   };
 
+  const handleUserClick = (user: UserStats) => {
+    console.log(`👤 User clicked:`, user.author_name, `(ID: ${user.user_id || user.author_name})`);
+    setSelectedUserId(user.user_id || user.author_name);
+    setSelectedUserName(user.author_name);
+  };
+
+  const handleCloseInsights = () => {
+    setSelectedUserId(null);
+    setSelectedUserName(null);
+  };
+
+  // Client-side filtering function
+  const filterUserData = (allUsers: UserStats[], minComments: number): UserAnalysisData => {
+    const filteredUsers = allUsers.filter(user => user.comment_count >= minComments);
+    
+    const mostActiveUsers = [...filteredUsers]
+      .sort((a, b) => b.comment_count - a.comment_count)
+      .slice(0, 10);
+
+    const mostToxicUsers = [...filteredUsers]
+      .sort((a, b) => b.average_toxicity - a.average_toxicity)
+      .slice(0, 10);
+
+    const mostLikedUsers = [...filteredUsers]
+      .sort((a, b) => b.total_likes - a.total_likes)
+      .slice(0, 10);
+
+    return {
+      most_active: mostActiveUsers,
+      most_toxic: mostToxicUsers,
+      most_liked: mostLikedUsers,
+      total_users: filteredUsers.length,
+      min_comments_threshold: minComments
+    };
+  };
+
   const renderUserCard = (user: UserStats, index: number, showToxicComment: boolean = false) => {
     const toxicityColors = getToxicityColor(user.average_toxicity);
     
     return (
       <div
         key={`${user.user_id || user.author_name}-${index}`}
-        className="bg-gradient-to-r from-[#181a2a] to-[#1f2132] rounded-xl border border-[#35374a]/50 p-6 hover:shadow-lg hover:shadow-purple-500/10 transition-all duration-300"
+        className="bg-gradient-to-r from-[#181a2a] to-[#1f2132] rounded-xl border border-[#35374a]/50 p-6 hover:shadow-lg hover:shadow-purple-500/10 transition-all duration-300 cursor-pointer hover:scale-[1.02]"
+        onClick={() => handleUserClick(user)}
       >
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
@@ -137,7 +254,7 @@ export default function UserAnalysis({ channelId }: UserAnalysisProps) {
     );
   };
 
-  if (loading) {
+  if (initialLoading) {
     return (
       <div className="bg-gradient-to-br from-[#232336] to-[#1a1b2e] rounded-2xl shadow-xl border border-[#35374a]/50 p-6 md:p-8">
         <div className="animate-pulse space-y-6">
@@ -207,10 +324,32 @@ export default function UserAnalysis({ channelId }: UserAnalysisProps) {
         <h2 className="text-2xl md:text-3xl font-bold text-white">User Analysis</h2>
       </div>
 
+      {/* Filter Controls */}
+      <div className="mb-6 p-4 bg-gray-700/20 border border-gray-600/50 rounded-lg">
+        <div className="flex items-center gap-4">
+          <label className="text-white text-sm font-medium">Minimum Comments:</label>
+          <select
+            value={minComments}
+            onChange={(e) => setMinComments(parseInt(e.target.value))}
+            className="px-3 py-2 bg-[#181a2a] border border-gray-600/50 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+          >
+            <option value={1}>1+ comments</option>
+            <option value={2}>2+ comments</option>
+            <option value={3}>3+ comments</option>
+            <option value={5}>5+ comments</option>
+            <option value={10}>10+ comments</option>
+            <option value={20}>20+ comments</option>
+          </select>
+          <span className="text-gray-400 text-xs">
+            Filter users by minimum comment count to focus on more active participants
+          </span>
+        </div>
+      </div>
+
       {/* Stats Overview */}
       <div className="mb-6 p-4 bg-blue-500/10 border border-blue-400/30 rounded-lg">
         <p className="text-blue-200 text-sm">
-          <strong>Total Users Analyzed:</strong> {userData.total_users} users with 2+ comments
+          <strong>Total Users Analyzed:</strong> {userData.total_users} users with {userData.min_comments_threshold}+ comments
         </p>
       </div>
 
@@ -237,8 +376,18 @@ export default function UserAnalysis({ channelId }: UserAnalysisProps) {
       </div>
 
       {/* User Cards */}
-      <div>
+      <div className="relative">
         <h3 className="text-xl font-semibold text-white mb-4">{getTabTitle()}</h3>
+        
+        {/* Loading overlay for filtering */}
+        {loading && (
+          <div className="absolute inset-0 bg-[#1a1b2e]/80 backdrop-blur-sm rounded-xl flex items-center justify-center z-10">
+            <div className="flex items-center gap-3 text-white">
+              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+              <span>Filtering users...</span>
+            </div>
+          </div>
+        )}
         
         {getCurrentData().length === 0 ? (
           <div className="text-center py-8">
@@ -252,6 +401,16 @@ export default function UserAnalysis({ channelId }: UserAnalysisProps) {
           </div>
         )}
       </div>
+
+      {/* User Insights Modal */}
+      {selectedUserId && selectedUserName && (
+        <UserInsights
+          channelId={channelId}
+          userId={selectedUserId}
+          authorName={selectedUserName}
+          onClose={handleCloseInsights}
+        />
+      )}
     </div>
   );
 } 

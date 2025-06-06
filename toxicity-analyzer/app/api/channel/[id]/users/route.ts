@@ -6,6 +6,24 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+interface CommentData {
+  id: string;
+  user_id: string | null;
+  author_name: string;
+  text: string;
+  like_count: number;
+  timestamp: string;
+  video_id: string;
+  videos: {
+    channel_id: string;
+  };
+  comments_data: {
+    toxicity_score: number;
+  }[] | {
+    toxicity_score: number;
+  } | null;
+}
+
 interface UserStats {
   user_id: string | null;
   author_name: string;
@@ -33,13 +51,25 @@ export async function GET(
 
     console.log(`Fetching user stats for channel: ${channelId}`);
 
+    // Get query parameters
+    const url = new URL(request.url);
+    const minCommentsParam = url.searchParams.get('min_comments') || '2';
+    const minComments = Math.max(1, parseInt(minCommentsParam) || 2); // Ensure minimum is 1
+    const getAllUsers = url.searchParams.get('get_all') === 'true';
+
     // Get all comments with toxicity scores for this channel (with pagination)
-    let allComments: any[] = [];
+    let allComments: CommentData[] = [];
     let offset = 0;
     const pageSize = 1000;
     let hasMoreData = true;
+    let pageCount = 0;
+
+    console.log(`Starting to fetch all comments for channel: ${channelId}`);
 
     while (hasMoreData) {
+      pageCount++;
+      console.log(`Fetching page ${pageCount}, offset: ${offset}`);
+      
       const { data: comments, error } = await supabase
         .from('comments')
         .select(`
@@ -48,6 +78,8 @@ export async function GET(
           author_name,
           text,
           like_count,
+          timestamp,
+          video_id,
           videos!inner (
             channel_id
           ),
@@ -57,6 +89,7 @@ export async function GET(
         `)
         .eq('videos.channel_id', channelId)
         .not('comments_data', 'is', null)
+        .order('id', { ascending: true }) // Add consistent ordering
         .range(offset, offset + pageSize - 1);
 
       if (error) {
@@ -65,16 +98,19 @@ export async function GET(
       }
 
       if (comments && comments.length > 0) {
-        allComments = [...allComments, ...comments];
+        console.log(`Page ${pageCount}: Found ${comments.length} comments`);
+        allComments = [...allComments, ...(comments as unknown as CommentData[])];
         offset += pageSize;
         hasMoreData = comments.length === pageSize;
       } else {
+        console.log(`Page ${pageCount}: No more comments found`);
         hasMoreData = false;
       }
     }
 
-    console.log(`Found ${allComments.length} comments with user data`);
+    console.log(`✅ Finished fetching all pages. Total comments found: ${allComments.length}`);
 
+    // Process comments without JavaScript deduplication (accept some duplicates for much better performance)
     // Group comments by user and calculate statistics
     const userStatsMap = new Map<string, {
       user_id: string | null;
@@ -86,27 +122,41 @@ export async function GET(
       }>;
     }>();
 
+    let processedComments = 0;
+    let skippedComments = 0;
+
     allComments.forEach(comment => {
       // Better null checking for comments_data
-      if (!comment.comments_data) return;
+      if (!comment.comments_data) {
+        skippedComments++;
+        return;
+      }
       
       let toxicityScore: number;
       
       // Handle different possible structures of comments_data
       if (Array.isArray(comment.comments_data)) {
-        if (comment.comments_data.length === 0 || !comment.comments_data[0]) return;
+        if (comment.comments_data.length === 0 || !comment.comments_data[0]) {
+          skippedComments++;
+          return;
+        }
         toxicityScore = comment.comments_data[0].toxicity_score;
       } else if (comment.comments_data && typeof comment.comments_data === 'object') {
         // If it's a single object instead of array
-        toxicityScore = (comment.comments_data as any).toxicity_score;
+        toxicityScore = (comment.comments_data as { toxicity_score: number }).toxicity_score;
       } else {
+        skippedComments++;
         return; // Skip if we can't determine the structure
       }
       
       // Skip if toxicity_score is null or undefined
-      if (toxicityScore === null || toxicityScore === undefined) return;
+      if (toxicityScore === null || toxicityScore === undefined) {
+        skippedComments++;
+        return;
+      }
       
-      const authorKey = comment.user_id || comment.author_name || 'Anonymous';
+      // Create a more robust user key
+      const authorKey = comment.user_id || comment.author_name || `Anonymous_${comment.id}`;
       
       if (!userStatsMap.has(authorKey)) {
         userStatsMap.set(authorKey, {
@@ -121,10 +171,18 @@ export async function GET(
         toxicity_score: toxicityScore,
         like_count: comment.like_count || 0
       });
+
+      processedComments++;
     });
 
+    console.log(`📊 Comment processing complete:`)
+    console.log(`   - Total comments fetched: ${allComments.length}`);
+    console.log(`   - Comments processed: ${processedComments}`);
+    console.log(`   - Comments skipped: ${skippedComments}`);
+    console.log(`   - Unique users found: ${userStatsMap.size}`);
+
     // Calculate final statistics for each user
-    const userStats: UserStats[] = Array.from(userStatsMap.entries()).map(([key, userData]) => {
+    const userStats: UserStats[] = Array.from(userStatsMap.entries()).map(([, userData]) => {
       const comments = userData.comments;
       const toxicityScores = comments.map(c => c.toxicity_score);
       const totalLikes = comments.reduce((sum, c) => sum + c.like_count, 0);
@@ -146,9 +204,47 @@ export async function GET(
     });
 
     // Filter out users with very few comments to focus on meaningful data
-    const significantUsers = userStats.filter(user => user.comment_count >= 2);
+    const significantUsers = userStats.filter(user => user.comment_count >= minComments);
 
-    // Sort by different criteria
+    // If get_all is true, return all users for client-side filtering
+    if (getAllUsers) {
+      console.log(`🎯 Returning all users for client-side filtering:`);
+      console.log(`   - Total user stats: ${userStats.length}`);
+      
+      // Return ALL users, not just top 100 from each category
+      const allActiveUsers = [...userStats]
+        .sort((a, b) => b.comment_count - a.comment_count);
+
+      const allToxicUsers = [...userStats]
+        .sort((a, b) => b.average_toxicity - a.average_toxicity);
+
+      const allLikedUsers = [...userStats]
+        .sort((a, b) => b.total_likes - a.total_likes);
+
+      console.log(`   - All active users: ${allActiveUsers.length}`);
+      console.log(`   - All toxic users: ${allToxicUsers.length}`);
+      console.log(`   - All liked users: ${allLikedUsers.length}`);
+      
+      // Verify data integrity
+      if (allActiveUsers.length !== allToxicUsers.length || allToxicUsers.length !== allLikedUsers.length) {
+        console.error(`❌ Data integrity issue - array lengths don't match!`);
+      } else {
+        console.log(`✅ Data integrity verified - all arrays have ${allActiveUsers.length} users`);
+      }
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          most_active: allActiveUsers,
+          most_toxic: allToxicUsers,
+          most_liked: allLikedUsers,
+          total_users: userStats.length,
+          min_comments_threshold: 1
+        }
+      });
+    }
+
+    // Sort by different criteria (original behavior)
     const mostActiveUsers = [...significantUsers]
       .sort((a, b) => b.comment_count - a.comment_count)
       .slice(0, 10);
@@ -161,7 +257,7 @@ export async function GET(
       .sort((a, b) => b.total_likes - a.total_likes)
       .slice(0, 10);
 
-    console.log(`Processed ${significantUsers.length} users with meaningful data`);
+    console.log(`Processed ${significantUsers.length} users with ${minComments}+ comments (filtered from ${userStats.length} total users)`);
 
     return NextResponse.json({
       success: true,
@@ -169,9 +265,11 @@ export async function GET(
         most_active: mostActiveUsers,
         most_toxic: mostToxicUsers,
         most_liked: mostLikedUsers,
-        total_users: significantUsers.length
+        total_users: significantUsers.length,
+        min_comments_threshold: minComments
       }
     });
+
   } catch (error) {
     console.error('Error in user stats:', error);
     return NextResponse.json(
