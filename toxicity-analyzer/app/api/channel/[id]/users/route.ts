@@ -6,23 +6,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-interface CommentData {
-  id: string;
-  user_id: string | null;
-  author_name: string;
-  text: string;
-  like_count: number;
-  timestamp: string;
-  video_id: string;
-  videos: {
-    channel_id: string;
-  };
-  comments_data: {
-    toxicity_score: number;
-  }[] | {
-    toxicity_score: number;
-  } | null;
-}
+
 
 interface UserStats {
   user_id: string | null;
@@ -58,7 +42,15 @@ export async function GET(
     const getAllUsers = url.searchParams.get('get_all') === 'true';
 
     // Get all comments with toxicity scores for this channel (with pagination)
-    let allComments: CommentData[] = [];
+    let allComments: {
+      user_id: string | null;
+      author_name: string;
+      text: string;
+      like_count: number;
+      video_id: string;
+      videos: { channel_id: string }[];
+      comments_data: { toxicity_score: number }[];
+    }[] = [];
     let offset = 0;
     const pageSize = 1000;
     let hasMoreData = true;
@@ -73,23 +65,21 @@ export async function GET(
       const { data: comments, error } = await supabase
         .from('comments')
         .select(`
-          id,
           user_id,
           author_name,
           text,
           like_count,
-          timestamp,
           video_id,
           videos!inner (
             channel_id
           ),
-          comments_data (
+          comments_data!inner (
             toxicity_score
           )
         `)
         .eq('videos.channel_id', channelId)
-        .not('comments_data', 'is', null)
-        .order('id', { ascending: true }) // Add consistent ordering
+        .not('comments_data.toxicity_score', 'is', null)
+        .order('id', { ascending: true })
         .range(offset, offset + pageSize - 1);
 
       if (error) {
@@ -99,7 +89,7 @@ export async function GET(
 
       if (comments && comments.length > 0) {
         console.log(`Page ${pageCount}: Found ${comments.length} comments`);
-        allComments = [...allComments, ...(comments as unknown as CommentData[])];
+        allComments = [...allComments, ...comments];
         offset += pageSize;
         hasMoreData = comments.length === pageSize;
       } else {
@@ -110,8 +100,35 @@ export async function GET(
 
     console.log(`✅ Finished fetching all pages. Total comments found: ${allComments.length}`);
 
+    if (!allComments || allComments.length === 0) {
+      return NextResponse.json({
+        success: true,
+        data: {
+          most_active: [],
+          most_toxic: [],
+          most_liked: [],
+          total_users: 0,
+          min_comments_threshold: minComments
+        }
+      });
+    }
+
+    // Apply efficient Map-based deduplication
+    const uniqueComments = new Map();
+    const deduplicatedComments = [];
+
+    for (const comment of allComments) {
+      const key = `${(comment.text || '').trim().toLowerCase()}_${comment.video_id}_${comment.user_id || comment.author_name}`;
+      
+      if (!uniqueComments.has(key)) {
+        uniqueComments.set(key, true);
+        deduplicatedComments.push(comment);
+      }
+    }
+
+    console.log(`After deduplication: ${deduplicatedComments.length} unique comments (removed ${allComments.length - deduplicatedComments.length} duplicates)`);
+
     // Group comments by user and calculate statistics
-    // Apply lightweight deduplication to avoid counting exact duplicates
     const userStatsMap = new Map<string, {
       user_id: string | null;
       author_name: string;
@@ -120,14 +137,12 @@ export async function GET(
         toxicity_score: number;
         like_count: number;
       }>;
-      seenComments: Set<string>; // For deduplication
     }>();
 
     let processedComments = 0;
     let skippedComments = 0;
-    let duplicatesSkipped = 0;
 
-    allComments.forEach(comment => {
+    deduplicatedComments.forEach(comment => {
       // Better null checking for comments_data
       if (!comment.comments_data) {
         skippedComments++;
@@ -158,41 +173,32 @@ export async function GET(
       }
       
       // Create a more robust user key
-      const authorKey = comment.user_id || comment.author_name || `Anonymous_${comment.id}`;
+      const authorKey = comment.user_id || comment.author_name || `Anonymous_${Date.now()}_${Math.random()}`;
       
       if (!userStatsMap.has(authorKey)) {
         userStatsMap.set(authorKey, {
           user_id: comment.user_id,
           author_name: comment.author_name || 'Anonymous',
-          comments: [],
-          seenComments: new Set()
+          comments: []
         });
       }
       
       const userStats = userStatsMap.get(authorKey)!;
       
-      // Create deduplication key: text + video + user (ignore timestamp and likes)
-      const dedupKey = `${(comment.text || '').trim().toLowerCase()}_${comment.video_id}_${comment.user_id || comment.author_name}`;
-      
-      // Only add if not already seen (deduplicate exact same comments)
-      if (!userStats.seenComments.has(dedupKey)) {
-        userStats.seenComments.add(dedupKey);
-        userStats.comments.push({
-          text: comment.text || '',
-          toxicity_score: toxicityScore,
-          like_count: comment.like_count || 0
-        });
-        processedComments++;
-      } else {
-        duplicatesSkipped++;
-      }
+      // No need for deduplication since SQL already handled it
+      userStats.comments.push({
+        text: comment.text || '',
+        toxicity_score: toxicityScore,
+        like_count: comment.like_count || 0
+      });
+      processedComments++;
     });
 
     console.log(`📊 Comment processing complete:`)
     console.log(`   - Total comments fetched: ${allComments.length}`);
+    console.log(`   - Deduplicated comments: ${deduplicatedComments.length}`);
     console.log(`   - Comments processed: ${processedComments}`);
     console.log(`   - Comments skipped (no toxicity): ${skippedComments}`);
-    console.log(`   - Duplicates skipped: ${duplicatesSkipped}`);
     console.log(`   - Unique users found: ${userStatsMap.size}`);
 
     // Calculate final statistics for each user

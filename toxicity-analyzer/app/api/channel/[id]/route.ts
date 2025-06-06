@@ -86,40 +86,61 @@ export async function GET(
     const videoIds = videos.map(v => v.id);
     console.log('Found videos:', videoIds.length);
 
-    // Get all analyzed comments count and data (with pagination)
-    let allAnalyzedComments: any[] = [];
+    // Use pagination to get all comment data (Supabase limits to 1000 per call)
+    console.log('Fetching comment data with pagination...');
+    
+    let allCommentData: any[] = [];
     let offset = 0;
     const pageSize = 1000;
     let hasMoreData = true;
+    let pageCount = 0;
 
     while (hasMoreData) {
-      const { data: analyzedComments, error: analyzedError } = await supabase
+      pageCount++;
+      console.log(`Fetching page ${pageCount}, offset: ${offset}`);
+      
+      const { data: commentData, error: sqlError } = await supabase
         .from('comments')
         .select(`
-          id,
-          comments_data (
-            toxicity_score
-          )
+          text,
+          video_id,
+          user_id,
+          author_name,
+          comments_data!inner(toxicity_score)
         `)
         .in('video_id', videoIds)
         .not('comments_data', 'is', null)
+        .order('id')
         .range(offset, offset + pageSize - 1);
 
-      if (analyzedError) {
-        console.error('Error fetching analyzed comments:', analyzedError);
-        throw analyzedError;
+      if (sqlError) {
+        console.error('Error fetching comment data:', sqlError);
+        return NextResponse.json({
+          success: true,
+          data: {
+            id: channel.id,
+            name: channel.name,
+            video_count: videoCount || 0,
+            comment_count: 0,
+            average_toxicity: 0,
+          },
+        });
       }
 
-      if (analyzedComments && analyzedComments.length > 0) {
-        allAnalyzedComments = [...allAnalyzedComments, ...analyzedComments];
+      if (commentData && commentData.length > 0) {
+        console.log(`Page ${pageCount}: Found ${commentData.length} comments`);
+        allCommentData = [...allCommentData, ...commentData];
         offset += pageSize;
-        hasMoreData = analyzedComments.length === pageSize;
+        hasMoreData = commentData.length === pageSize;
       } else {
+        console.log(`Page ${pageCount}: No more comments found`);
         hasMoreData = false;
       }
     }
 
-    if (!allAnalyzedComments || allAnalyzedComments.length === 0) {
+    console.log(`✅ Finished fetching all pages. Total comments found: ${allCommentData.length}`);
+
+    if (allCommentData.length === 0) {
       return NextResponse.json({
         success: true,
         data: {
@@ -132,15 +153,31 @@ export async function GET(
       });
     }
 
-    console.log('Found analyzed comments:', allAnalyzedComments.length);
+    console.log(`Applying efficient Map-based deduplication to ${allCommentData.length} comments...`);
 
-    // Calculate average toxicity from the analyzed comments
-    const averageToxicity = allAnalyzedComments.reduce(
-      (acc, curr) => acc + (curr.comments_data?.toxicity_score || 0),
-      0
-    ) / allAnalyzedComments.length;
+    // Use Map for O(1) lookup during deduplication instead of filter/findIndex
+    const uniqueComments = new Map();
+    let totalToxicity = 0;
 
-    console.log('Average toxicity:', averageToxicity);
+    for (const comment of allCommentData) {
+      const key = `${(comment.text || '').trim().toLowerCase()}_${comment.video_id}_${comment.user_id || comment.author_name}`;
+      
+      if (!uniqueComments.has(key)) {
+        const toxicityScore = Array.isArray(comment.comments_data) 
+          ? comment.comments_data[0]?.toxicity_score 
+          : comment.comments_data?.toxicity_score;
+          
+        if (toxicityScore !== undefined && toxicityScore !== null) {
+          uniqueComments.set(key, toxicityScore);
+          totalToxicity += toxicityScore;
+        }
+      }
+    }
+
+    const commentCount = uniqueComments.size;
+    const averageToxicity = commentCount > 0 ? totalToxicity / commentCount : 0;
+
+    console.log(`Deduplication completed: ${commentCount} unique comments (removed ${allCommentData.length - commentCount} duplicates), avg toxicity: ${averageToxicity.toFixed(3)}`);
 
     return NextResponse.json({
       success: true,
@@ -148,7 +185,7 @@ export async function GET(
         id: channel.id,
         name: channel.name,
         video_count: videoCount || 0,
-        comment_count: allAnalyzedComments.length,
+        comment_count: commentCount,
         average_toxicity: averageToxicity,
       },
     });

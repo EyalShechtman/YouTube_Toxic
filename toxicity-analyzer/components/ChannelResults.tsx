@@ -26,10 +26,20 @@ interface ToxicityData {
   video_id?: string;
 }
 
+interface UserStats {
+  user_id: string | null;
+  author_name: string;
+  comment_count: number;
+  average_toxicity: number;
+  max_toxicity: number;
+  most_toxic_comment: string;
+  total_likes: number;
+}
+
 interface UserData {
-  most_active: any[];
-  most_toxic: any[];
-  most_liked: any[];
+  most_active: UserStats[];
+  most_toxic: UserStats[];
+  most_liked: UserStats[];
   total_users: number;
   min_comments_threshold: number;
 }

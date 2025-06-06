@@ -6,14 +6,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-interface CommentWithToxicity {
-  timestamp: string;
-  comments_data: {
-    toxicity_score: number;
-  }[] | {
-    toxicity_score: number;
-  } | null;
-}
+
 
 export async function GET(
   request: Request,
@@ -54,69 +47,98 @@ export async function GET(
 
     console.log(`📹 Found ${videos.length} videos for channel ${channelId}`);
 
-    // For each video, get aggregated toxicity data
+    // For each video, get aggregated toxicity data with efficient deduplication
     const toxicityData = await Promise.all(
       videos.map(async (video) => {
-        const { data: comments, error: commentsError } = await supabase
-          .from('comments')
-          .select(`
-            timestamp,
-            comments_data (
-              toxicity_score
-            )
-          `)
-          .eq('video_id', video.id)
-          .not('comments_data', 'is', null)
-          .order('timestamp', { ascending: true })
-          .limit(1000); // Limit to avoid fetching too many comments per video
+        // Get comments for this video with pagination (videos can have >1000 comments)
+        let videoComments: any[] = [];
+        let offset = 0;
+        const pageSize = 1000;
+        let hasMoreData = true;
 
-        if (commentsError) {
-          console.error(`Error fetching comments for video ${video.id}:`, commentsError);
-          return null;
-        }
+        while (hasMoreData) {
+          const { data: comments, error: commentsError } = await supabase
+            .from('comments')
+            .select(`
+              timestamp,
+              text,
+              video_id,
+              user_id,
+              author_name,
+              comments_data!inner(toxicity_score)
+            `)
+            .eq('video_id', video.id)
+            .not('comments_data', 'is', null)
+            .order('timestamp', { ascending: true })
+            .range(offset, offset + pageSize - 1);
 
-        if (!comments || comments.length === 0) {
-          return null;
-        }
-
-        // Type assertion for the comments
-        const typedComments = comments as unknown as CommentWithToxicity[];
-
-        // Calculate average toxicity for this video
-        const validComments = typedComments.filter(c => {
-          if (!c.comments_data) return false;
-          
-          // Handle both array and object structures
-          if (Array.isArray(c.comments_data)) {
-            return c.comments_data.length > 0 && c.comments_data[0]?.toxicity_score !== undefined;
-          } else if (typeof c.comments_data === 'object') {
-            return c.comments_data.toxicity_score !== undefined;
+          if (commentsError) {
+            console.error(`Error fetching comments for video ${video.id}:`, commentsError);
+            return null;
           }
-          return false;
-        });
 
-        if (validComments.length === 0) {
-          console.log(`No valid comments with toxicity data for video ${video.id}`);
+          if (comments && comments.length > 0) {
+            videoComments = [...videoComments, ...comments];
+            offset += pageSize;
+            hasMoreData = comments.length === pageSize;
+          } else {
+            hasMoreData = false;
+          }
+        }
+
+        if (!videoComments || videoComments.length === 0) {
           return null;
         }
 
-        const avgToxicity = validComments.reduce((sum, comment) => {
-          // Handle both array and object structures
-          if (!comment.comments_data) return sum; // Additional null check
-          
-          const toxicity = Array.isArray(comment.comments_data) 
-            ? comment.comments_data[0].toxicity_score 
-            : comment.comments_data.toxicity_score;
-          return sum + toxicity;
-        }, 0) / validComments.length;
+        // Apply efficient Map-based deduplication
+        const uniqueComments = new Map();
+        let earliestTimestamp: string | null = null;
 
-        console.log(`Video ${video.id}: ${validComments.length} valid comments, avg toxicity: ${avgToxicity.toFixed(3)}`);
+        for (const comment of videoComments) {
+          const key = `${(comment.text || '').trim().toLowerCase()}_${comment.video_id}_${comment.user_id || comment.author_name}`;
+          
+          if (!uniqueComments.has(key)) {
+            let toxicityScore: number | undefined;
+            
+            if (Array.isArray(comment.comments_data)) {
+              toxicityScore = comment.comments_data[0]?.toxicity_score;
+            } else if (comment.comments_data && typeof comment.comments_data === 'object') {
+              toxicityScore = (comment.comments_data as { toxicity_score: number }).toxicity_score;
+            }
+              
+            if (toxicityScore !== undefined && toxicityScore !== null) {
+              uniqueComments.set(key, {
+                toxicity_score: toxicityScore,
+                timestamp: comment.timestamp
+              });
+              
+              if (!earliestTimestamp || new Date(comment.timestamp) < new Date(earliestTimestamp)) {
+                earliestTimestamp = comment.timestamp;
+              }
+            }
+          }
+        }
+
+        console.log(`Video ${video.id}: ${videoComments.length} total -> ${uniqueComments.size} after deduplication`);
+
+        if (uniqueComments.size === 0) {
+          return null;
+        }
+
+        // Calculate average toxicity from unique comments
+        let totalToxicity = 0;
+        for (const commentData of uniqueComments.values()) {
+          totalToxicity += commentData.toxicity_score;
+        }
+        
+        const avgToxicity = totalToxicity / uniqueComments.size;
+        console.log(`Video ${video.id}: ${uniqueComments.size} valid comments, avg toxicity: ${avgToxicity.toFixed(3)}`);
 
         // Use earliest comment timestamp as video timestamp
-        const timestamp = typedComments[0].timestamp;
+        const timestamp = earliestTimestamp;
 
         return {
-          timestamp,
+          timestamp: timestamp || new Date().toISOString(),
           toxicity_score: avgToxicity,
           video_title: video.title,
           video_id: video.id,

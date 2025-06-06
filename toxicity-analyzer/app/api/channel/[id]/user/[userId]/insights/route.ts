@@ -42,8 +42,8 @@ export async function GET(
     // Decode the userId in case it's URL encoded (for author names)
     const decodedUserId = decodeURIComponent(userId);
 
-    // Get all comments from this user with video information (with pagination)
-    let allComments: CommentWithVideo[] = [];
+    // Get user comments with pagination
+    let allComments: any[] = [];
     let offset = 0;
     const pageSize = 1000;
     let hasMoreData = true;
@@ -63,12 +63,12 @@ export async function GET(
             title,
             channel_id
           ),
-          comments_data (
+          comments_data!inner (
             toxicity_score
           )
         `)
         .eq('videos.channel_id', channelId)
-        .not('comments_data', 'is', null)
+        .not('comments_data.toxicity_score', 'is', null)
         .or(`user_id.eq."${decodedUserId}",author_name.eq."${decodedUserId}"`)
         .order('timestamp', { ascending: true })
         .range(offset, offset + pageSize - 1);
@@ -79,7 +79,7 @@ export async function GET(
       }
 
       if (comments && comments.length > 0) {
-        allComments = [...allComments, ...(comments as unknown as CommentWithVideo[])];
+        allComments = [...allComments, ...comments];
         offset += pageSize;
         hasMoreData = comments.length === pageSize;
       } else {
@@ -87,24 +87,26 @@ export async function GET(
       }
     }
 
-    console.log(`Found ${allComments.length} comments for user ${decodedUserId}`);
+    console.log(`Found ${allComments?.length || 0} comments for user ${decodedUserId}`);
 
-    // Deduplicate comments based on text, video_id, and user (ignore timestamp and likes for true deduplication)
-    const deduplicatedComments = allComments.filter((comment, index, array) => {
-      if (!comment.comments_data) return false;
-      
-      // Create same deduplication key as used in users API: text + video + user
-      const key = `${(comment.text || '').trim().toLowerCase()}_${comment.video_id}_${comment.user_id || comment.author_name}`;
-      return array.findIndex(c => {
-        if (!c.comments_data) return false;
-        const cKey = `${(c.text || '').trim().toLowerCase()}_${c.video_id}_${c.user_id || c.author_name}`;
-        return cKey === key;
-      }) === index;
-    });
+    // Apply efficient Map-based deduplication
+    const uniqueComments = new Map();
+    const deduplicatedComments = [];
 
-    console.log(`After deduplication: ${deduplicatedComments.length} unique comments (removed ${allComments.length - deduplicatedComments.length} duplicates)`);
+    if (allComments) {
+      for (const comment of allComments) {
+        const key = `${(comment.text || '').trim().toLowerCase()}_${comment.video_id}_${comment.user_id || comment.author_name}`;
+        
+        if (!uniqueComments.has(key)) {
+          uniqueComments.set(key, true);
+          deduplicatedComments.push(comment);
+        }
+      }
+    }
 
-    const validComments = deduplicatedComments;
+    console.log(`After deduplication: ${deduplicatedComments.length} unique comments (removed ${(allComments?.length || 0) - deduplicatedComments.length} duplicates)`);
+
+    const validComments = deduplicatedComments.filter(comment => comment.comments_data);
     
     console.log(`Processing ${validComments.length} comments with toxicity data`);
 
