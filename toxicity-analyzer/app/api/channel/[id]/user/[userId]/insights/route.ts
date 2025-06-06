@@ -89,14 +89,15 @@ export async function GET(
 
     console.log(`Found ${allComments.length} comments for user ${decodedUserId}`);
 
-    // Deduplicate comments based on text, timestamp, and video_id to handle duplicates
+    // Deduplicate comments based on text, video_id, and user (ignore timestamp and likes for true deduplication)
     const deduplicatedComments = allComments.filter((comment, index, array) => {
       if (!comment.comments_data) return false;
       
-      const key = `${comment.text?.trim().toLowerCase() || ''}_${comment.timestamp}_${comment.video_id}`;
+      // Create same deduplication key as used in users API: text + video + user
+      const key = `${(comment.text || '').trim().toLowerCase()}_${comment.video_id}_${comment.user_id || comment.author_name}`;
       return array.findIndex(c => {
         if (!c.comments_data) return false;
-        const cKey = `${c.text?.trim().toLowerCase() || ''}_${c.timestamp}_${c.video_id}`;
+        const cKey = `${(c.text || '').trim().toLowerCase()}_${c.video_id}_${c.user_id || c.author_name}`;
         return cKey === key;
       }) === index;
     });

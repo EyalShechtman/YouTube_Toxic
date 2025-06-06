@@ -110,8 +110,8 @@ export async function GET(
 
     console.log(`✅ Finished fetching all pages. Total comments found: ${allComments.length}`);
 
-    // Process comments without JavaScript deduplication (accept some duplicates for much better performance)
     // Group comments by user and calculate statistics
+    // Apply lightweight deduplication to avoid counting exact duplicates
     const userStatsMap = new Map<string, {
       user_id: string | null;
       author_name: string;
@@ -120,10 +120,12 @@ export async function GET(
         toxicity_score: number;
         like_count: number;
       }>;
+      seenComments: Set<string>; // For deduplication
     }>();
 
     let processedComments = 0;
     let skippedComments = 0;
+    let duplicatesSkipped = 0;
 
     allComments.forEach(comment => {
       // Better null checking for comments_data
@@ -162,23 +164,35 @@ export async function GET(
         userStatsMap.set(authorKey, {
           user_id: comment.user_id,
           author_name: comment.author_name || 'Anonymous',
-          comments: []
+          comments: [],
+          seenComments: new Set()
         });
       }
       
-      userStatsMap.get(authorKey)!.comments.push({
-        text: comment.text || '',
-        toxicity_score: toxicityScore,
-        like_count: comment.like_count || 0
-      });
-
-      processedComments++;
+      const userStats = userStatsMap.get(authorKey)!;
+      
+      // Create deduplication key: text + video + user (ignore timestamp and likes)
+      const dedupKey = `${(comment.text || '').trim().toLowerCase()}_${comment.video_id}_${comment.user_id || comment.author_name}`;
+      
+      // Only add if not already seen (deduplicate exact same comments)
+      if (!userStats.seenComments.has(dedupKey)) {
+        userStats.seenComments.add(dedupKey);
+        userStats.comments.push({
+          text: comment.text || '',
+          toxicity_score: toxicityScore,
+          like_count: comment.like_count || 0
+        });
+        processedComments++;
+      } else {
+        duplicatesSkipped++;
+      }
     });
 
     console.log(`📊 Comment processing complete:`)
     console.log(`   - Total comments fetched: ${allComments.length}`);
     console.log(`   - Comments processed: ${processedComments}`);
-    console.log(`   - Comments skipped: ${skippedComments}`);
+    console.log(`   - Comments skipped (no toxicity): ${skippedComments}`);
+    console.log(`   - Duplicates skipped: ${duplicatesSkipped}`);
     console.log(`   - Unique users found: ${userStatsMap.size}`);
 
     // Calculate final statistics for each user

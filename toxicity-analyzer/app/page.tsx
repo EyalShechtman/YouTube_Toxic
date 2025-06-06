@@ -44,7 +44,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [isDataLoading, setIsDataLoading] = useState(false);
-  const [isUserDataLoading, setIsUserDataLoading] = useState(false);
+
   
   // Data states
   const [channelData, setChannelData] = useState<ChannelData | null>(null);
@@ -63,7 +63,6 @@ export default function Home() {
       setError(null);
       setIsTransitioning(false);
       setIsDataLoading(false);
-      setIsUserDataLoading(false);
       setChannelData(null);
       setVideos([]);
       setToxicityData([]);
@@ -120,49 +119,55 @@ export default function Home() {
         console.log(`📊 Core API calls completed in ${Date.now() - startTime}ms`);
 
         // Process core results
-        let hasErrors = false;
-        let errorMessages: string[] = [];
-
-        // Handle channel data (required)
-        if (channelResult.status === 'rejected' || !channelResult.value.success) {
-          throw new Error('Failed to fetch channel data - this is required');
-        }
-        setChannelData(channelResult.value.data);
-        console.log(`📈 Setting channel data: ${channelResult.value.data.name} (${channelResult.value.data.comment_count} comments)`);
-
-        // Handle toxicity data (optional but important)
-        if (toxicityResult.status === 'rejected' || !toxicityResult.value.success) {
-          console.warn('⚠️ Failed to fetch toxicity data:', toxicityResult.status === 'rejected' ? toxicityResult.reason : toxicityResult.value.message);
-          setToxicityData([]);
-          hasErrors = true;
-          errorMessages.push('Toxicity timeline unavailable');
+        if (channelResult.status === 'fulfilled' && channelResult.value.success) {
+          setChannelData(channelResult.value.data);
+          console.log(`✅ Channel data loaded: ${channelResult.value.data.name}`);
         } else {
-          setToxicityData(toxicityResult.value.data);
-          console.log(`📈 Setting toxicity data: ${toxicityResult.value.data.length} data points`);
+          console.error('❌ Channel API failed:', channelResult);
         }
 
-        // Handle videos data (optional)
-        if (videosResult.status === 'rejected' || !videosResult.value.success) {
-          console.warn('⚠️ Failed to fetch videos data:', videosResult.status === 'rejected' ? videosResult.reason : videosResult.value.message);
-          setVideos([]);
-          hasErrors = true;
-          errorMessages.push('Video list unavailable');
+        if (toxicityResult.status === 'fulfilled' && toxicityResult.value.success) {
+          setToxicityData(toxicityResult.value.data || []);
+          console.log(`✅ Toxicity data loaded: ${toxicityResult.value.data?.length || 0} data points`);
         } else {
-          setVideos(videosResult.value.data);
-          console.log(`📈 Setting videos data: ${videosResult.value.data.length} videos`);
+          console.error('❌ Toxicity API failed:', toxicityResult);
         }
 
-        if (hasErrors) {
-          console.warn(`⚠️ Some data failed to load: ${errorMessages.join(', ')}`);
+        if (videosResult.status === 'fulfilled' && videosResult.value.success) {
+          setVideos(videosResult.value.data || []);
+          console.log(`✅ Videos data loaded: ${videosResult.value.data?.length || 0} videos`);
+        } else {
+          console.error('❌ Videos API failed:', videosResult);
         }
 
-        console.log(`✅ Initial data fetch completed for channel: ${channelId}`);
-
-        // Small delay to show the completion message, then transition to results
+        // Show results immediately with core data
         setTimeout(() => {
           setIsTransitioning(false);
           setIsDataLoading(false);
-        }, 1000);
+        }, 500);
+
+        // Fetch user data separately (slower, can show loading state)
+        console.log(`🔄 Starting user data fetch...`);
+        const userStartTime = Date.now();
+        try {
+          const userResponse = await fetch(`/api/channel/${channelId}/users?min_comments=1&get_all=true`);
+          const userResult = await userResponse.json();
+          
+          console.log(`📊 User API call completed in ${Date.now() - userStartTime}ms`);
+
+          if (userResponse.ok && userResult.success) {
+            setUserData(userResult.data);
+            console.log(`✅ User data loaded: ${userResult.data?.most_active?.length || 0} total users`);
+          } else {
+            console.error('❌ User API failed:', userResult);
+            setUserData(null);
+          }
+        } catch (userErr) {
+          console.error('❌ Error fetching user data:', userErr);
+          setUserData(null);
+        }
+
+        console.log(`✅ All data fetch completed for channel: ${channelId}`);
 
       } catch (err) {
         console.error('❌ Error fetching initial data:', err);
@@ -175,40 +180,6 @@ export default function Home() {
     fetchInitialData();
   }, [channelId, isTransitioning]);
 
-  // Fetch user data separately after initial data loads
-  useEffect(() => {
-    const fetchUserData = async () => {
-      if (!channelId || isTransitioning || isDataLoading || !channelData) return;
-
-      try {
-        console.log(`👥 Starting user data fetch for channel: ${channelId}`);
-        setIsUserDataLoading(true);
-        
-        const startTime = Date.now();
-        const response = await fetch(`/api/channel/${channelId}/users?min_comments=1&get_all=true`);
-        const result = await response.json();
-        
-        console.log(`👥 User data fetch completed in ${Date.now() - startTime}ms`);
-
-        if (response.ok && result.success) {
-          setUserData(result.data);
-          console.log(`📈 Setting users data: ${result.data.most_active.length} total users`);
-        } else {
-          console.warn('⚠️ Failed to fetch users data:', result.message);
-          setUserData(null);
-        }
-
-      } catch (err) {
-        console.error('❌ Error fetching user data:', err);
-        setUserData(null);
-      } finally {
-        setIsUserDataLoading(false);
-      }
-    };
-
-    fetchUserData();
-  }, [channelId, channelData, isTransitioning, isDataLoading]);
-
   const handleStartNew = () => {
     setIsAnalyzing(false);
     setAnalysisId(null);
@@ -216,7 +187,6 @@ export default function Home() {
     setError(null);
     setIsTransitioning(false);
     setIsDataLoading(false);
-    setIsUserDataLoading(false);
     setChannelData(null);
     setVideos([]);
     setToxicityData([]);
@@ -306,7 +276,6 @@ export default function Home() {
               videos={videos}
               toxicityData={toxicityData}
               userData={userData}
-              isUserDataLoading={isUserDataLoading}
               selectedVideoId={selectedVideoId}
               onVideoSelect={handleVideoSelect}
             />
